@@ -2,8 +2,10 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"regexp"
+	"strings"
 )
 
 // Jev routing modes. Shadow computes the Jev classification and logs it next to
@@ -75,11 +77,34 @@ func validateJevRouting(j JevRoutingConfig) error {
 		return fmt.Errorf("jev_routing.timeout_ms must be between 1 and %d", maxJevTimeoutMs)
 	}
 	u, err := url.Parse(j.BaseURL)
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return fmt.Errorf("jev_routing.base_url must be an absolute http or https URL")
+	}
+	// The key and the prompt text travel to this URL: no cleartext off the machine.
+	if u.Scheme == "http" && !isLoopbackHost(u.Hostname()) {
+		return fmt.Errorf("jev_routing.base_url must use https unless the host is loopback")
 	}
 	if !jevAPIKeyEnvPattern.MatchString(j.APIKeyEnv) {
 		return fmt.Errorf("jev_routing.api_key_env must be the NAME of an environment variable (letters, digits, underscore), not a key")
 	}
 	return nil
+}
+
+// isLoopbackHost reports whether host is localhost or a loopback IP literal, the
+// only places plain http is acceptable (local stubs and tunnels).
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// CheckJevRouting applies the block's defaults to a copy and validates it, so a
+// caller that writes a config to disk (the dashboard import) can refuse a bad
+// jev_routing block before the file is replaced, with the same rules the loader
+// enforces at start.
+func CheckJevRouting(j JevRoutingConfig) error {
+	applyJevDefaults(&j)
+	return validateJevRouting(j)
 }

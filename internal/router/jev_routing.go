@@ -32,7 +32,12 @@ type jevRuntime struct {
 func (j *jevRuntime) init() {
 	j.once.Do(func() {
 		if j.client == nil {
-			j.client = &http.Client{} // deadlines come from the per-call context
+			// Deadlines come from the per-call context. Redirects are never followed:
+			// a 307/308 would re-send the prompt body to wherever it points, so any
+			// 3xx is a non-200 and fails open.
+			j.client = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			}}
 		}
 		if j.sem == nil {
 			j.sem = make(chan struct{}, jevShadowMaxInFlight)
@@ -73,11 +78,15 @@ func (r *ModelRouter) detectScenario(messages []MessageContent, tokenCount, tool
 }
 
 // latestPromptText is the authored text of the latest user message, with the
-// harness's <system-reminder> blocks removed (stripHarnessBlocks). It never
-// falls back to MessageContent.Content, which carries tool output.
+// harness's tagged blocks removed (stripHarnessBlocks). It never falls back to
+// MessageContent.Content, which carries tool output, nor to an earlier user
+// message. Text over maxJevPromptBytes is not classified at all (returns "").
 func latestPromptText(messages []MessageContent) string {
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == "user" {
+			if len(messages[i].PromptText) > maxJevPromptBytes {
+				return ""
+			}
 			return stripHarnessBlocks(messages[i].PromptText)
 		}
 	}
@@ -99,12 +108,12 @@ func (r *ModelRouter) jevStreamingShadow(messages []MessageContent, tokenCount i
 	if _, decided := detectExactScenario(messages, tokenCount, 0, cfg); decided {
 		return
 	}
-	keyword := detectKeywordScenario(messages, tokenCount)
 	text := latestPromptText(messages)
 	if strings.TrimSpace(text) == "" {
-		r.jev.log().Debug("jev routing skipped: latest user message has no authored text", "keyword_scenario", keyword.Scenario)
+		r.jev.log().Debug("jev routing skipped: latest user message has no authored text (empty, or over 64 KB)")
 		return
 	}
+	keyword := detectKeywordScenario(messages, tokenCount) // only a log field here; scanned after the cheap gates
 	r.jev.init()
 	r.jevShadow(cfg.JevRouting, messages, keyword, text)
 }
@@ -134,7 +143,7 @@ func (r *ModelRouter) jevShadow(jcfg config.JevRoutingConfig, messages []Message
 	select {
 	case r.jev.sem <- struct{}{}:
 	default:
-		r.jev.log().Warn("jev shadow skipped: too many classifications in flight",
+		r.logJevWarn("saturated", "jev shadow skipped: too many classifications in flight",
 			"limit", jevShadowMaxInFlight, "keyword_scenario", keyword.Scenario)
 		return
 	}
@@ -143,6 +152,13 @@ func (r *ModelRouter) jevShadow(jcfg config.JevRoutingConfig, messages []Message
 	go func() {
 		defer r.jev.wg.Done()
 		defer func() { <-r.jev.sem }()
+		// Shadow mode must never take the process down: a panic here is logged
+		// (throttled) and the request, which has long since returned, is unaffected.
+		defer func() {
+			if rec := recover(); rec != nil {
+				r.logJevWarn("panic", "jev shadow classification panicked", "recovered", fmt.Sprint(rec))
+			}
+		}()
 		res, err := r.classify(jcfg, text)
 		if err != nil {
 			r.logJevFallback(jcfg.Mode, keyword, err)
@@ -198,14 +214,19 @@ func (r *ModelRouter) logJevResult(mode string, keyword ScenarioResult, jev Scen
 // throttled per reason (jevWarnThrottle) so an outage is one line a minute, not
 // one per request.
 func (r *ModelRouter) logJevFallback(mode string, keyword ScenarioResult, err error) {
-	reason := err.Error()
-	ok, suppressed := r.jev.warn.allow(reason)
+	r.logJevWarn(err.Error(), "jev routing failed, keyword scenario stands",
+		"mode", mode, "keyword_scenario", keyword.Scenario, "reason", err.Error())
+}
+
+// logJevWarn is the single warning path for the classifier: at most one line a
+// minute per reason key, with the number of occurrences suppressed since the last.
+func (r *ModelRouter) logJevWarn(reasonKey, msg string, attrs ...any) {
+	ok, suppressed := r.jev.warn.allow(reasonKey)
 	if !ok {
 		return
 	}
-	attrs := []any{"mode", mode, "keyword_scenario", keyword.Scenario, "reason", reason}
 	if suppressed > 0 {
 		attrs = append(attrs, "suppressed", suppressed)
 	}
-	r.jev.log().Warn("jev routing failed, keyword scenario stands", attrs...)
+	r.jev.log().Warn(msg, attrs...)
 }

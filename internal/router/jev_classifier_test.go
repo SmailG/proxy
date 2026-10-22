@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -372,4 +373,25 @@ func TestJevClassifier_TransportFailureClasses(t *testing.T) {
 			t.Errorf("error carries the URL: %v", err)
 		}
 	})
+}
+
+// JSON cannot carry NaN, but the range check is the last line of defence for
+// values that reach it by any other path.
+func TestParseJevResponse_RejectsNaN(t *testing.T) {
+	nan, one := math.NaN(), 1.0
+	body := func(score, noul *float64) jevResponseBody {
+		return jevResponseBody{Answers: map[string]jevAnswer{
+			jevActionID:       {Type: "score", Score: score},
+			jevArchitectureID: {Type: "noul", Noul: noul},
+		}}
+	}
+	if _, err := parseJevResponse(body(&nan, &one)); err == nil {
+		t.Error("NaN score was accepted")
+	}
+	if _, err := parseJevResponse(body(&one, &nan)); err == nil {
+		t.Error("NaN noul was accepted")
+	}
+	if _, err := parseJevResponse(body(&one, &one)); err != nil {
+		t.Errorf("control: finite values rejected: %v", err)
+	}
 }

@@ -588,6 +588,7 @@ func (r *ModelRouter) RouteForStreaming(messages []MessageContent, tokenCount in
 	}
 
 	// Otherwise, use scenario-based routing for streaming
+	r.jevStreamingShadow(messages, tokenCount, cfg)
 	result := RouteForStreaming(messages, tokenCount, cfg)
 	scenarioKey := string(result.Scenario)
 	trigger := fmt.Sprintf("scenario=%s (%s)", result.Scenario, result.Reason)

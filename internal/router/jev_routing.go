@@ -26,6 +26,7 @@ type jevRuntime struct {
 	sem    chan struct{}
 	wg     sync.WaitGroup
 	logger *slog.Logger
+	warn   jevWarnThrottle
 }
 
 func (j *jevRuntime) init() {
@@ -71,15 +72,41 @@ func (r *ModelRouter) detectScenario(messages []MessageContent, tokenCount, tool
 	return keyword
 }
 
-// latestPromptText is the authored text of the latest user message. It never
+// latestPromptText is the authored text of the latest user message, with the
+// harness's <system-reminder> blocks removed (stripHarnessBlocks). It never
 // falls back to MessageContent.Content, which carries tool output.
 func latestPromptText(messages []MessageContent) string {
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == "user" {
-			return messages[i].PromptText
+			return stripHarnessBlocks(messages[i].PromptText)
 		}
 	}
 	return ""
+}
+
+// jevStreamingShadow is the shadow-mode Jev call for the streaming path, which
+// routes to fast and otherwise never reaches detectScenario. It only logs: the
+// streaming route (including the complex/think -> fast downgrade) is untouched.
+// Active mode makes no Jev call here, as before. keyword_scenario in the log is
+// the scenario the keyword matcher picks for the text, the same comparison the
+// non-streaming shadow line makes, not the fast scenario the stream is sent to.
+// The tool count is not known on this path, so the tool-heavy exact check is not
+// applied; the token-count and image checks are.
+func (r *ModelRouter) jevStreamingShadow(messages []MessageContent, tokenCount int, cfg *config.Config) {
+	if !cfg.JevRouting.Enabled || cfg.JevRouting.Mode != config.JevModeShadow {
+		return
+	}
+	if _, decided := detectExactScenario(messages, tokenCount, 0, cfg); decided {
+		return
+	}
+	keyword := detectKeywordScenario(messages, tokenCount)
+	text := latestPromptText(messages)
+	if strings.TrimSpace(text) == "" {
+		r.jev.log().Debug("jev routing skipped: latest user message has no authored text", "keyword_scenario", keyword.Scenario)
+		return
+	}
+	r.jev.init()
+	r.jevShadow(cfg.JevRouting, messages, keyword, text)
 }
 
 // jevActive lets Jev decide. It blocks the request for at most timeout_ms; any
@@ -167,7 +194,18 @@ func (r *ModelRouter) logJevResult(mode string, keyword ScenarioResult, jev Scen
 	)
 }
 
+// logJevFallback warns that Jev failed and the keyword scenario stands. It is
+// throttled per reason (jevWarnThrottle) so an outage is one line a minute, not
+// one per request.
 func (r *ModelRouter) logJevFallback(mode string, keyword ScenarioResult, err error) {
-	r.jev.log().Warn("jev routing failed, keyword scenario stands",
-		"mode", mode, "keyword_scenario", keyword.Scenario, "reason", err.Error())
+	reason := err.Error()
+	ok, suppressed := r.jev.warn.allow(reason)
+	if !ok {
+		return
+	}
+	attrs := []any{"mode", mode, "keyword_scenario", keyword.Scenario, "reason", reason}
+	if suppressed > 0 {
+		attrs = append(attrs, "suppressed", suppressed)
+	}
+	r.jev.log().Warn("jev routing failed, keyword scenario stands", attrs...)
 }

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - Opt-in `jev_routing` classifier (TypeSafe System One, shadow-first, fail-open): classifies the latest user message semantically instead of by substring keywords. Off by default; when enabled the first 600 characters of the latest user message are sent to TypeSafe. See CONFIGURATION.md
+- `jev_routing` shadow mode now also samples streaming requests (the path Claude Code uses): same background call, bound, timeout and log line; the streaming route is unchanged and active mode still makes no Jev call on streams
+- `jev_routing` removes `<system-reminder>` blocks from the text before the 600-character cut; a reminder-only turn is not sent. An unterminated opening tag drops the rest of the text
+- `jev_routing` fallback warnings (missing key, outage) log the first occurrence of each reason at once, then at most once a minute with a `suppressed` count
 
 ### Fixed
 - Accept `openrouter` and `aws-bedrock` in `model_overrides` and `model_family_overrides`, matching the providers `models` and `fallbacks` already allow (#134)

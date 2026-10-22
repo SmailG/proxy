@@ -26,6 +26,10 @@ Debug logs show:
 - Model selection and fallback attempts
 - Upstream request/response details
 
+## Compare against the Jev classifier (opt-in)
+
+With `jev_routing.enabled: true` in `shadow` mode the log also carries one `INFO jev routing` line per sampled request: `keyword_scenario`, `jev_level`, `jev_scenario`, `architecture_prob`, `agree` and `latency_ms`. `agree=false` lines are the requests where the keyword matcher and Jev disagree; routing still follows the keyword scenario. Requests matched by `model_overrides` / `model_family_overrides` are never classified. See CONFIGURATION.md § Jev Request Classifier.
+
 ## Check Scenario Detection
 
 The log line `INFO routing request` shows the selected scenario, the model, and a `reason` explaining both:

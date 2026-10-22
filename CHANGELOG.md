@@ -11,7 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Opt-in `jev_routing` classifier (TypeSafe System One, shadow-first, fail-open): classifies the latest user message semantically instead of by substring keywords. Off by default; when enabled the first 600 characters of the latest user message are sent to TypeSafe. See CONFIGURATION.md
 - `jev_routing` shadow mode now also samples streaming requests (the path Claude Code uses): same background call, bound, timeout and log line; the streaming route is unchanged and active mode still makes no Jev call on streams
 - `jev_routing` removes `<system-reminder>` blocks from the text before the 600-character cut; a reminder-only turn is not sent. An unterminated opening tag drops the rest of the text
-- `jev_routing` fallback warnings (missing key, outage) log the first occurrence of each reason at once, then at most once a minute with a `suppressed` count
+- `jev_routing` fallback warnings (missing key, outage) and the in-flight saturation warning log the first occurrence of each reason at once, then at most once a minute with a `suppressed` count
+- `jev_routing` never sees a request matched by `model_overrides` / `model_family_overrides` (the fallback chain behind an override is built without Jev); redirects from the TypeSafe API are not followed; `base_url` must be `https` unless loopback; text over 64 KB is not classified
+- `jev_routing` also removes slash-command echoes (`<command-name>`, `<command-message>`, `<command-args>`, `<local-command-*>`) and tool-call echo blocks before the 600-character cut; stripping is a single linear pass
+- A startup notice is printed when `jev_routing` is enabled, saying the latest user message is sent to TypeSafe
+- Dashboard config export no longer redacts `jev_routing.api_key_env` (a variable name, not a secret), and config import validates `jev_routing` before it replaces the file on disk
 
 ### Fixed
 - Accept `openrouter` and `aws-bedrock` in `model_overrides` and `model_family_overrides`, matching the providers `models` and `fallbacks` already allow (#134)

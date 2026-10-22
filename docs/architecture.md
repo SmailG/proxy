@@ -59,6 +59,8 @@ The router analyzes each request and assigns it a scenario. Each scenario maps t
 5. **Background** — simple read-only ops, no tools → Qwen3.5 Plus
 6. **Default** → Kimi K2.6
 
+**Optional Jev classifier**: when `jev_routing` is enabled the router can also ask TypeSafe's Jev model what kind of work the latest user message is, after the exact checks (token count, image, tool count). In `shadow` mode it only logs next to the keyword result; in `active` mode it decides. It is fail-open, off by default, and never sees requests matched by a model override. See CONFIGURATION.md.
+
 **Streaming override**: when `enable_streaming_scenario_routing` is false (default), streaming requests always route to the `fast` model (Qwen3.6 Plus) for better TTFT.
 
 **Cost-based routing**: when `cost_routing.enabled` (or the legacy `enable_cost_based_routing`) is set, the `Selector` resolves all eligible models from the catalog for the matched scenario, applies the `max_context_window` cap, filters by `prefer_providers`, and sorts by effective cost (raw cost + per-provider penalty). The cheapest candidate becomes the primary model for that request, replacing the static `models.<scenario>` entry. This is implemented in `internal/router/selector.go`.

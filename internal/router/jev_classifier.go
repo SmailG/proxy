@@ -173,12 +173,12 @@ func classifyTransportError(ctx context.Context) string {
 // wrong type, non-finite or out of range is an error: a half-trusted answer
 // must not steer routing.
 func parseJevResponse(body jevResponseBody) (JevResult, error) {
-	action, ok := body.Answers[jevActionID]
-	if !ok || action.Type != "score" || action.Score == nil {
+	action := body.Answers[jevActionID] // an absent answer has type "" and fails below
+	if action.Type != "score" || action.Score == nil {
 		return JevResult{}, errors.New("response missing the score answer")
 	}
-	arch, ok := body.Answers[jevArchitectureID]
-	if !ok || arch.Type != "noul" || arch.Noul == nil {
+	arch := body.Answers[jevArchitectureID]
+	if arch.Type != "noul" || arch.Noul == nil {
 		return JevResult{}, errors.New("response missing the noul answer")
 	}
 	score, noul := *action.Score, *arch.Noul
@@ -192,8 +192,9 @@ func parseJevResponse(body jevResponseBody) (JevResult, error) {
 	return JevResult{Level: int(math.Round(score)), Score: score, ArchitectureProb: noul}, nil
 }
 
+// inRange is false for NaN, whose comparisons are all false.
 func inRange(v, lo, hi float64) bool {
-	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= lo && v <= hi
+	return v >= lo && v <= hi
 }
 
 // truncateChars cuts s to at most max characters (runes), never splitting a

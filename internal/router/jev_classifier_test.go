@@ -252,6 +252,9 @@ func TestJevClassifier_Failures(t *testing.T) {
 		{"score above range", respondJSON(jevOKBody(2.4, 0.1)), "out of range"},
 		{"noul below range", respondJSON(jevOKBody(1, -0.1)), "out of range"},
 		{"noul above range", respondJSON(jevOKBody(1, 1.2)), "out of range"},
+		{"action typed noul but carrying a score", respondJSON(`{"answers":{"action":{"type":"noul","score":1},"architecture":{"type":"noul","noul":0.1}}}`), "missing"},
+		{"architecture typed score but carrying a noul", respondJSON(`{"answers":{"action":{"type":"score","score":1},"architecture":{"type":"score","noul":0.1}}}`), "missing"},
+		{"noul null", respondJSON(`{"answers":{"action":{"type":"score","score":1},"architecture":{"type":"noul","noul":null}}}`), "missing"},
 		{"score null", respondJSON(`{"answers":{"action":{"type":"score","score":null},"architecture":{"type":"noul","noul":0.1}}}`), "missing"},
 		{"noul missing", respondJSON(`{"answers":{"action":{"type":"score","score":1}}}`), "missing"},
 	}

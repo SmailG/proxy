@@ -241,6 +241,12 @@ func TestJevRouting_ShadowBoundsConcurrentClassifications(t *testing.T) {
 	if n := stub.hits.Load(); n != jevShadowMaxInFlight {
 		t.Errorf("Jev requests = %d, want %d: the request over the bound must not be sent", n, jevShadowMaxInFlight)
 	}
+	// Finished classifications give their slot back: the next request is sampled.
+	route(t, r, userMsg("after the burst"), 100, 0)
+	r.jev.wg.Wait()
+	if n := stub.hits.Load(); n != jevShadowMaxInFlight+1 {
+		t.Errorf("Jev requests = %d after the burst, want %d: slots were not released", n, jevShadowMaxInFlight+1)
+	}
 }
 
 // Shadow mode maps a level with the same function active mode uses, so its

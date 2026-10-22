@@ -27,6 +27,7 @@ type Config struct {
 	OpenCodeZen                    OpenCodeZenConfig        `json:"opencode_zen"`
 	OpenRouter                     OpenRouterConfig         `json:"openrouter"`
 	AnthropicFirst                 AnthropicFirstConfig     `json:"anthropic_first"`
+	JevRouting                     JevRoutingConfig         `json:"jev_routing"`
 	Logging                        LoggingConfig            `json:"logging"`
 	Debug                          DebugConfig              `json:"debug"`
 	Catalog                        CatalogConfig            `json:"catalog"`

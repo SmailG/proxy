@@ -31,6 +31,7 @@ type ModelRouter struct {
 	refreshDone  chan struct{}
 	updateSignal chan struct{}
 	refreshWG    sync.WaitGroup
+	jev          jevRuntime
 }
 
 func NewModelRouter(atomic *config.AtomicConfig) *ModelRouter {
@@ -361,7 +362,7 @@ func (r *ModelRouter) RouteWithTools(messages []MessageContent, tokenCount, tool
 	}
 
 	// Otherwise, use scenario-based routing
-	result := DetectScenarioWithTools(messages, tokenCount, toolCount, cfg)
+	result := r.detectScenario(messages, tokenCount, toolCount, cfg)
 	scenarioKey := string(result.Scenario)
 	trigger := fmt.Sprintf("scenario=%s (%s)", result.Scenario, result.Reason)
 

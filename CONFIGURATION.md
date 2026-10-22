@@ -21,6 +21,15 @@ For migration, `~/.config/oc-go-cc/config.json` is loaded when the new config fi
     "base_url": "https://api.anthropic.com"
   },
 
+  "jev_routing": {
+    "enabled": false,
+    "mode": "shadow",
+    "model": "jev-1.13.0",
+    "timeout_ms": 300,
+    "api_key_env": "TYPESAFE_AI_API_KEY",
+    "base_url": "https://api.typesafe.ai"
+  },
+
   "enable_cost_based_routing": false,
   "cost_routing": {
     "enabled": true,
@@ -163,6 +172,41 @@ Fallback occurs for HTTP 408, 429, 5xx, and transport failures before a response
 Once response bytes have started, a failed stream cannot be restarted on another model without duplicating content. `/v1/messages/count_tokens` remains local and does not affect availability state.
 
 When OpenCode Go returns `GoUsageLimitError`, remaining Go models are skipped for that request and the chain advances to Zen. The default chain uses Qwen3.7 Plus, Qwen3.7 Max, then the currently working Zen-free Nemotron 3 Ultra, MiMo V2.5, and DeepSeek V4 Flash models. Free Zen endpoints are time-limited and may retain data under [OpenCode's documented privacy terms](https://opencode.ai/docs/zen/#privacy).
+
+## Jev Request Classifier (`jev_routing`)
+
+Scenario routing decides `complex`, `think` and `background` with substring keywords on the latest user message, so it misfires on negations and prose ("keep it simple, don't over-optimize" routes to `complex`). `jev_routing` is an opt-in, fail-open classifier that asks the TypeSafe System One model (Jev) what kind of work the request is. It is **off by default**.
+
+> **Privacy: when enabled, the first 600 characters of the latest user message are sent to TypeSafe (`api.typesafe.ai`) on every request that reaches keyword routing.** Only that text is sent: no system prompt, earlier turns, tool results or file contents. A turn that carries only tool output (no text the user typed) is not sent at all. Do not enable it for sessions whose prompts must not leave your machine.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `false` | Turn the classifier on. A disabled block changes nothing. |
+| `mode` | `"shadow"` | `"shadow"` logs what Jev would choose and routes as before; `"active"` lets Jev decide. |
+| `model` | `"jev-1.13.0"` | TypeSafe model id sent in the request. |
+| `timeout_ms` | `300` | Deadline for the call, 1 to 10000. |
+| `api_key_env` | `"TYPESAFE_AI_API_KEY"` | **Name** of the environment variable that holds the API key. The key is read from the environment on each call; it is never stored in the config file or logged. A value that is not a plain variable name fails the load. |
+| `base_url` | `"https://api.typesafe.ai"` | TypeSafe API base URL. |
+
+```bash
+export TYPESAFE_AI_API_KEY=...   # set in the environment the proxy starts from
+```
+
+**What runs first.** The exact checks stay ahead of Jev and are unchanged: token count above the long-context threshold, a new image, and a tool count at or above the tool-heavy threshold. Jev only sees requests those leave undecided.
+
+**Shadow mode.** The route is still the keyword scenario. Jev runs in a background goroutine, so the request is never delayed: `timeout_ms` bounds the background call, not the request. At most 16 classifications are in flight; a request over that bound is simply not sampled (logged as a warning). Each completed call logs one line:
+
+```
+level=INFO msg="jev routing" mode=shadow keyword_scenario=complex jev_level=1 jev_scenario=default architecture_prob=0.12 agree=false latency_ms=212
+```
+
+`architecture_prob` is a second question ("does the request ask for an architecture-level or multi-component change?") and is for the log only; it does not affect routing. Run shadow mode for a while and compare `agree=false` lines before switching to `active`.
+
+**Active mode.** Jev replaces the keyword decision: level 2 (needs design or deep reasoning) is `complex`, level 1 (ordinary coding work) is `default`, level 0 (trivial or read-only) is `background` only if the keyword matcher's no-tool precondition holds (none of its tool or file-changing words such as `edit`, `write` or `tool` appear in any message of the conversation, tool output included, so in a long tool-using session level 0 mostly lands on `default`), otherwise `default`. The request waits for Jev, at most `timeout_ms`.
+
+**Fail-open.** A missing key, timeout, network error, non-200 response (including 401, 429, 5xx), malformed body or out-of-range value falls back to the keyword result and logs a warning with the reason (never the key or the response body).
+
+**Streaming.** Jev is wired into `RouteWithTools`. A streaming request goes there only when `enable_streaming_scenario_routing` is `true`; with the default `false` it takes the streaming path, which routes to `fast` and never calls Jev (so shadow mode logs nothing for Claude Code streams until that option is on). The streaming path is unchanged.
 
 ## Providers
 

@@ -1,0 +1,30 @@
+{"text": "Architect a new microservice for user authentication", "level": 2, "source": "scenarios_test.go"}
+{"text": "Please refactor this code to use interfaces", "level": 2, "source": "scenarios_test.go"}
+{"text": "Think through this problem step by step", "level": 2, "source": "scenarios_test.go"}
+{"text": "Please architect the new service", "level": 2, "source": "scenarios_test.go"}
+{"text": "Hello, how are you?", "level": 0, "source": "scenarios_test.go"}
+{"text": "what is Go", "level": 0, "source": "scenarios_test.go"}
+{"text": "what is the time", "level": 0, "source": "model_router_test.go"}
+{"text": "fix the UI layout of the settings page", "level": 1, "source": "scenarios_test.go"}
+{"text": "check this Docker image for the failing health check", "level": 1, "source": "scenarios_test.go"}
+{"text": "Think about this", "level": 1, "source": "scenarios_test.go"}
+{"text": "keep it simple, don't over-optimize anything", "level": 1, "source": "negation"}
+{"text": "no need to refactor, just rename the variable foo to bar", "level": 0, "source": "negation"}
+{"text": "this isn't complex, just fix the typo in the README", "level": 1, "source": "negation"}
+{"text": "I don't want a plan, just add a null check in parse()", "level": 1, "source": "negation"}
+{"text": "don't analyze it, list the files in src", "level": 0, "source": "negation"}
+{"text": "performance is fine, please add a unit test for parse()", "level": 1, "source": "negation"}
+{"text": "not a big redesign, only fix the off-by-one in the pager", "level": 1, "source": "negation"}
+{"text": "I can't think of a name, call the variable count", "level": 1, "source": "negation"}
+{"text": "this is not difficult: show me the contents of main.go", "level": 0, "source": "negation"}
+{"text": "explain what this regex does, nothing challenging", "level": 0, "source": "negation"}
+{"text": "write a function that parses ISO dates", "level": 1, "source": "ordinary"}
+{"text": "fix the bug where the cache never expires", "level": 1, "source": "ordinary"}
+{"text": "write a test for the retry logic", "level": 1, "source": "ordinary"}
+{"text": "our checkout service and the inventory service disagree about stock under load; work out why and how we should restructure the ownership of that data", "level": 2, "source": "hard"}
+{"text": "we need to move from a monolith to services without downtime, propose the boundaries and the migration order", "level": 2, "source": "hard"}
+{"text": "the build is flaky only on arm64 and only after the third run, I have no idea where to start", "level": 2, "source": "hard"}
+{"text": "compare using a queue versus polling for the sync job and tell me which trade-offs matter here", "level": 2, "source": "hard"}
+{"text": "show me the file config.json", "level": 0, "source": "trivial"}
+{"text": "list the exported functions in this package", "level": 0, "source": "trivial"}
+{"text": "rename the variable tmp to buffer in this function", "level": 0, "source": "trivial"}

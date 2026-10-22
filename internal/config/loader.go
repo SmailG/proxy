@@ -311,6 +311,7 @@ func applyDefaults(cfg *Config) {
 	if cfg.Catalog.SourceURL == "" {
 		cfg.Catalog.SourceURL = defaultCatalogSourceURL
 	}
+	applyJevDefaults(&cfg.JevRouting)
 }
 
 // validate checks that all required configuration fields are present.
@@ -323,6 +324,10 @@ func validate(cfg *Config) error {
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 			return fmt.Errorf("anthropic_first.base_url must be an absolute http or https URL")
 		}
+	}
+
+	if err := validateJevRouting(cfg.JevRouting); err != nil {
+		return err
 	}
 
 	if err := validateAPIKeys(cfg.APIKeys); err != nil {

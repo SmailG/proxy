@@ -574,6 +574,7 @@ func (h *MessagesHandler) HandleMessages(w http.ResponseWriter, r *http.Request)
 		mc := router.MessageContent{
 			Role:        msg.Role,
 			Content:     content,
+			PromptText:  extractPromptText(blocks),
 			HasImage:    blocksHaveImage(blocks),
 			ImageHashes: imageHashesFromBlocks(blocks),
 		}
@@ -1629,6 +1630,20 @@ func extractTextFromBlocks(blocks []types.ContentBlock) string {
 		}
 	}
 	return content
+}
+
+// extractPromptText returns only the text blocks of a message: what the user
+// wrote, without tool_result output (file contents, command output), tool_use
+// markers or image placeholders. It feeds the opt-in Jev classifier, which
+// sends text off-machine and so must never see tool output.
+func extractPromptText(blocks []types.ContentBlock) string {
+	var text string
+	for _, block := range blocks {
+		if block.Type == "text" {
+			text += block.Text
+		}
+	}
+	return text
 }
 
 func blocksHaveImage(blocks []types.ContentBlock) bool {

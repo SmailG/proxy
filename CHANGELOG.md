@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Opt-in `jev_routing` classifier (TypeSafe System One, shadow-first, fail-open): classifies the latest user message semantically instead of by substring keywords. Off by default; when enabled the first 600 characters of the latest user message are sent to TypeSafe. See CONFIGURATION.md
+
 ### Fixed
 - Accept `openrouter` and `aws-bedrock` in `model_overrides` and `model_family_overrides`, matching the providers `models` and `fallbacks` already allow (#134)
 - `routatic-proxy update` now fails before downloading, with an actionable message, when the install directory is not writable (e.g. root-owned `/usr/local/bin`)

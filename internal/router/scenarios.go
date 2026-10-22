@@ -39,8 +39,14 @@ type ScenarioResult struct {
 
 // MessageContent represents a single message in a conversation.
 type MessageContent struct {
-	Role        string
-	Content     string
+	Role    string
+	Content string
+	// PromptText is the text the user (or system) authored in this message:
+	// text blocks only, with no tool_result output, tool_use markers or image
+	// placeholders, unlike Content. It is the only field the Jev classifier may
+	// send off-machine. Leave it empty when the caller cannot separate authored
+	// text from tool output; the classifier then skips the message.
+	PromptText  string
 	HasImage    bool
 	ImageHashes []string
 }
@@ -84,6 +90,16 @@ const toolHeavyThreshold = 64
 // DetectScenarioWithTools is DetectScenario plus the request's tool count, which
 // is not derivable from the messages. Callers without it use DetectScenario.
 func DetectScenarioWithTools(messages []MessageContent, tokenCount, toolCount int, cfg *config.Config) ScenarioResult {
+	if result, ok := detectExactScenario(messages, tokenCount, toolCount, cfg); ok {
+		return result
+	}
+	return detectKeywordScenario(messages, tokenCount)
+}
+
+// detectExactScenario runs the checks that need no text interpretation: token
+// count, a new image, tool count. ok is false when none of them applies, which
+// is when the keyword matcher (or the Jev classifier in its place) decides.
+func detectExactScenario(messages []MessageContent, tokenCount, toolCount int, cfg *config.Config) (ScenarioResult, bool) {
 	facts := AnalyzeRequestFacts(messages)
 	// 1. Check for long context first (most important)
 	threshold := getLongContextThreshold(cfg)
@@ -93,13 +109,13 @@ func DetectScenarioWithTools(messages []MessageContent, tokenCount, toolCount in
 				Scenario:   ScenarioVisionLongContext,
 				TokenCount: tokenCount,
 				Reason:     fmt.Sprintf("image request token count %d exceeds threshold %d", tokenCount, threshold),
-			}
+			}, true
 		}
 		return ScenarioResult{
 			Scenario:   ScenarioLongContext,
 			TokenCount: tokenCount,
 			Reason:     fmt.Sprintf("token count %d exceeds long-context threshold %d", tokenCount, threshold),
-		}
+		}, true
 	}
 
 	if facts.NeedsVision {
@@ -108,13 +124,13 @@ func DetectScenarioWithTools(messages []MessageContent, tokenCount, toolCount in
 				Scenario:   ScenarioVisionComplex,
 				TokenCount: tokenCount,
 				Reason:     "complex image request detected",
-			}
+			}, true
 		}
 		return ScenarioResult{
 			Scenario:   ScenarioVision,
 			TokenCount: tokenCount,
 			Reason:     "simple image request detected",
-		}
+		}, true
 	}
 
 	// 1b. Tool-heavy requests are complex by size, before any text heuristic.
@@ -123,9 +139,15 @@ func DetectScenarioWithTools(messages []MessageContent, tokenCount, toolCount in
 			Scenario:   ScenarioComplex,
 			TokenCount: tokenCount,
 			Reason:     fmt.Sprintf("tool count %d at or above tool-heavy threshold %d", toolCount, toolHeavyThreshold),
-		}
+		}, true
 	}
 
+	return ScenarioResult{}, false
+}
+
+// detectKeywordScenario is the substring-keyword decision for requests the exact
+// checks did not settle: complex, think, background, default.
+func detectKeywordScenario(messages []MessageContent, tokenCount int) ScenarioResult {
 	// 2. Check for complex tasks (architectural OR tool-related)
 	latestUser := latestUserMessages(messages)
 	if hasComplexPattern(latestUser) {
@@ -285,19 +307,8 @@ func hasThinkingPattern(messages []MessageContent) bool {
 // If there's any mention of tools, functions, or writing, it's NOT background.
 func hasBackgroundPattern(messages []MessageContent) bool {
 	// If ANY tool keywords appear, it's NOT a background task
-	toolBlockers := []string{
-		"tool", "function", "execute", "run command",
-		"write", "edit", "create", "delete", "remove",
-		"implement", "build", "add", "modify",
-	}
-
-	for _, msg := range messages {
-		lower := strings.ToLower(msg.Content)
-		for _, kw := range toolBlockers {
-			if strings.Contains(lower, kw) {
-				return false
-			}
-		}
+	if hasToolBlocker(messages) {
+		return false
 	}
 
 	// Only truly simple operations are background tasks
@@ -311,6 +322,28 @@ func hasBackgroundPattern(messages []MessageContent) bool {
 	for _, msg := range messages {
 		lower := strings.ToLower(msg.Content)
 		for _, kw := range backgroundKeywords {
+			if strings.Contains(lower, kw) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasToolBlocker reports whether any message mentions tools or file-changing
+// work. It is the precondition that keeps a request out of the background
+// scenario; the Jev classifier applies the same one before routing level 0 to
+// background.
+func hasToolBlocker(messages []MessageContent) bool {
+	toolBlockers := []string{
+		"tool", "function", "execute", "run command",
+		"write", "edit", "create", "delete", "remove",
+		"implement", "build", "add", "modify",
+	}
+
+	for _, msg := range messages {
+		lower := strings.ToLower(msg.Content)
+		for _, kw := range toolBlockers {
 			if strings.Contains(lower, kw) {
 				return true
 			}

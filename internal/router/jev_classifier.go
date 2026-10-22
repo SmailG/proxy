@@ -145,8 +145,8 @@ func (c *jevClassifier) post(ctx context.Context, apiKey, text string) (jevRespo
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	resp, err := c.client.Do(req)
 	if err != nil {
-		// err can embed the URL but never headers; still report only its class.
-		return out, fmt.Errorf("request failed: %s", classifyTransportError(ctx, err))
+		// Report only the class of failure: err text can carry the URL.
+		return out, fmt.Errorf("request failed: %s", classifyTransportError(ctx))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
@@ -158,17 +158,13 @@ func (c *jevClassifier) post(ctx context.Context, apiKey, text string) (jevRespo
 	return out, nil
 }
 
-func classifyTransportError(ctx context.Context, err error) string {
+func classifyTransportError(ctx context.Context) string {
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		return "deadline exceeded"
 	case errors.Is(ctx.Err(), context.Canceled):
 		return "canceled"
 	default:
-		var netErr interface{ Timeout() bool }
-		if errors.As(err, &netErr) && netErr.Timeout() {
-			return "timeout"
-		}
 		return "transport error"
 	}
 }

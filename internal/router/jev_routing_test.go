@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/routatic/proxy/internal/config"
+	"github.com/routatic/proxy/internal/core"
 )
 
 // syncBuffer is a log sink safe for the shadow goroutine and the test to share.
@@ -239,5 +240,67 @@ func TestJevRouting_ShadowBoundsConcurrentClassifications(t *testing.T) {
 	r.jev.wg.Wait()
 	if n := stub.hits.Load(); n != jevShadowMaxInFlight {
 		t.Errorf("Jev requests = %d, want %d: the request over the bound must not be sent", n, jevShadowMaxInFlight)
+	}
+}
+
+// Shadow mode maps a level with the same function active mode uses, so its
+// jev_scenario (and agree flag) shows what active mode would do.
+func TestJevRouting_ShadowAppliesTheBackgroundPrecondition(t *testing.T) {
+	cases := []struct {
+		name, text, wantScenario string
+	}{
+		{"level 0, no tool keyword", "Hello", "jev_scenario=background"},
+		{"level 0, tool keyword present", "show me the file, don't edit it", "jev_scenario=default"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := newJevStub(t, respondJSON(jevOKBody(0, 0.1)))
+			r, logs := newJevRouter(t, stub, config.JevModeShadow)
+			route(t, r, userMsg(tc.text), 100, 0)
+			r.jev.wg.Wait()
+			wantLog(t, logs, "jev_level=0", tc.wantScenario)
+		})
+	}
+}
+
+func TestJevRouting_ActiveKeepsTokenCount(t *testing.T) {
+	stub := newJevStub(t, respondJSON(jevOKBody(2, 0.1)))
+	r, _ := newJevRouter(t, stub, config.JevModeActive)
+	got := r.detectScenario(userMsg("Hello"), 4321, 0, r.atomic.Get())
+	if got.Scenario != ScenarioComplex || got.TokenCount != 4321 {
+		t.Errorf("got scenario %s with token count %d, want complex with 4321", got.Scenario, got.TokenCount)
+	}
+}
+
+// Without an injected logger the router logs through slog's default logger.
+func TestJevRouting_LogsThroughDefaultLoggerWhenNoneInjected(t *testing.T) {
+	stub := newJevStub(t, respondJSON(jevOKBody(1, 0.1)))
+	r, _ := newJevRouter(t, stub, config.JevModeActive)
+	r.jev.logger = nil
+	logs := &syncBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	route(t, r, userMsg("Hello"), 100, 0)
+	wantLog(t, logs, "jev routing", "mode=active")
+}
+
+// The (currently unwired) scenario policy builds its own router messages; Jev
+// must work through it too.
+func TestJevRouting_ScenarioPolicyCarriesPromptText(t *testing.T) {
+	stub := newJevStub(t, respondJSON(jevOKBody(2, 0.1)))
+	r, _ := newJevRouter(t, stub, config.JevModeActive)
+	ctx := &EvaluationContext{
+		Request: &core.NormalizedRequest{Messages: []core.NormalizedMessage{
+			{Role: "user", Blocks: []core.NormalizedContentBlock{{Type: "text", Text: "Hello"}}},
+		}},
+		TokenCount: 100,
+	}
+	_, decision, err := NewScenarioPolicy(r).Evaluate(ctx)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if decision.ModelID != "m-complex" || stub.hits.Load() != 1 {
+		t.Errorf("decision model %q after %d Jev requests, want m-complex after 1", decision.ModelID, stub.hits.Load())
 	}
 }

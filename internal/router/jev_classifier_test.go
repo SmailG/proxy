@@ -333,3 +333,40 @@ func TestJevClassifier_BaseURLTrailingSlash(t *testing.T) {
 		t.Errorf("path = %q, want /v1/systemone", got)
 	}
 }
+
+// A response larger than the read cap is cut off and fails to parse, rather than
+// being buffered whole.
+func TestJevClassifier_ResponseSizeIsCapped(t *testing.T) {
+	padding := strings.Repeat("x", jevResponseMaxBytes+1024)
+	body := `{"model":"` + padding + `","answers":{}}`
+	stub := newJevStub(t, respondJSON(body))
+	_, err := classifyWith(t, stub, "do something")
+	if err == nil || !strings.Contains(err.Error(), "malformed") {
+		t.Errorf("error = %v, want a malformed-response error", err)
+	}
+}
+
+func TestJevClassifier_TransportFailureClasses(t *testing.T) {
+	t.Setenv(jevTestKeyEnv, jevTestKey)
+	t.Run("canceled", func(t *testing.T) {
+		stub := newJevStub(t, respondJSON(jevOKBody(1, 0.1)))
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := newJevClassifier(http.DefaultClient, jevTestConfig(stub.srv.URL)).Classify(ctx, "x")
+		if err == nil || !strings.Contains(err.Error(), "canceled") {
+			t.Errorf("error = %v, want canceled", err)
+		}
+	})
+	t.Run("connection refused", func(t *testing.T) {
+		stub := newJevStub(t, respondJSON(jevOKBody(1, 0.1)))
+		url := stub.srv.URL
+		stub.srv.Close() // nothing listens there now
+		_, err := newJevClassifier(http.DefaultClient, jevTestConfig(url)).Classify(context.Background(), "x")
+		if err == nil || !strings.Contains(err.Error(), "transport error") {
+			t.Errorf("error = %v, want transport error", err)
+		}
+		if strings.Contains(err.Error(), "127.0.0.1") {
+			t.Errorf("error carries the URL: %v", err)
+		}
+	})
+}

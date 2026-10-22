@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/routatic/proxy/pkg/types"
@@ -37,5 +38,24 @@ func TestExtractPromptText_ToolResultOnlyTurnIsEmpty(t *testing.T) {
 	blocks := []types.ContentBlock{{Type: "tool_result", Content: json.RawMessage(`"output"`)}}
 	if got := extractPromptText(blocks); got != "" {
 		t.Errorf("extractPromptText = %q, want empty for a tool_result-only turn", got)
+	}
+}
+
+// The handler hands the router both views of a message. Content keeps tool
+// output for keyword routing; PromptText must be set, and must not carry it.
+func TestRouterMessageFromBlocks_SetsPromptTextWithoutToolOutput(t *testing.T) {
+	blocks := []types.ContentBlock{
+		{Type: "tool_result", Content: json.RawMessage(`"SECRET FILE CONTENTS"`)},
+		{Type: "text", Text: "fix the parser"},
+	}
+	mc := routerMessageFromBlocks("user", blocks)
+	if mc.Role != "user" {
+		t.Errorf("Role = %q", mc.Role)
+	}
+	if mc.PromptText != "fix the parser" {
+		t.Errorf("PromptText = %q, want only the authored text", mc.PromptText)
+	}
+	if !strings.Contains(mc.Content, "SECRET FILE CONTENTS") {
+		t.Errorf("Content = %q, keyword routing still needs the tool output", mc.Content)
 	}
 }

@@ -571,14 +571,7 @@ func (h *MessagesHandler) HandleMessages(w http.ResponseWriter, r *http.Request)
 	for _, msg := range anthropicReq.Messages {
 		blocks := msg.ContentBlocks()
 		content := extractTextFromBlocks(blocks)
-		mc := router.MessageContent{
-			Role:        msg.Role,
-			Content:     content,
-			PromptText:  extractPromptText(blocks),
-			HasImage:    blocksHaveImage(blocks),
-			ImageHashes: imageHashesFromBlocks(blocks),
-		}
-		routerMessages = append(routerMessages, mc)
+		routerMessages = append(routerMessages, routerMessageFromBlocks(msg.Role, blocks))
 		tokenMessages = append(tokenMessages, token.MessageContent{
 			Role:        msg.Role,
 			Content:     content,
@@ -1630,6 +1623,18 @@ func extractTextFromBlocks(blocks []types.ContentBlock) string {
 		}
 	}
 	return content
+}
+
+// routerMessageFromBlocks builds the router's view of one message: Content for
+// keyword routing, PromptText (authored text only) for the opt-in Jev classifier.
+func routerMessageFromBlocks(role string, blocks []types.ContentBlock) router.MessageContent {
+	return router.MessageContent{
+		Role:        role,
+		Content:     extractTextFromBlocks(blocks),
+		PromptText:  extractPromptText(blocks),
+		HasImage:    blocksHaveImage(blocks),
+		ImageHashes: imageHashesFromBlocks(blocks),
+	}
 }
 
 // extractPromptText returns only the text blocks of a message: what the user

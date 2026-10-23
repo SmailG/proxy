@@ -570,11 +570,11 @@ func (h *MessagesHandler) HandleMessages(w http.ResponseWriter, r *http.Request)
 
 	for _, msg := range anthropicReq.Messages {
 		blocks := msg.ContentBlocks()
-		content := extractTextFromBlocks(blocks)
-		routerMessages = append(routerMessages, routerMessageFromBlocks(msg.Role, blocks))
+		routerMsg := routerMessageFromBlocks(msg.Role, blocks)
+		routerMessages = append(routerMessages, routerMsg)
 		tokenMessages = append(tokenMessages, token.MessageContent{
 			Role:        msg.Role,
-			Content:     content,
+			Content:     routerMsg.Content,
 			ExtraTokens: imageTokenEstimate(blocks),
 		})
 	}

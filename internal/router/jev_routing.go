@@ -27,6 +27,7 @@ type jevRuntime struct {
 	wg     sync.WaitGroup
 	logger *slog.Logger
 	warn   jevWarnThrottle
+	cache  jevDecisionCache
 }
 
 func (j *jevRuntime) init() {
@@ -66,6 +67,11 @@ func (r *ModelRouter) detectScenario(messages []MessageContent, tokenCount, tool
 	keyword := detectKeywordScenario(messages, tokenCount)
 	text := latestPromptText(messages)
 	if strings.TrimSpace(text) == "" {
+		if cfg.JevRouting.Mode == config.JevModeActive {
+			if res, ok := r.jevCached(messages, keyword); ok {
+				return res
+			}
+		}
 		r.jev.log().Debug("jev routing skipped: latest user message has no authored text", "keyword_scenario", keyword.Scenario)
 		return keyword
 	}
@@ -126,12 +132,34 @@ func (r *ModelRouter) jevActive(jcfg config.JevRoutingConfig, messages []Message
 		r.logJevFallback(jcfg.Mode, keyword, err)
 		return keyword
 	}
+	r.jev.cache.put(jevKey(text), res)
 	scenario := jevScenarioForLevel(res.Level, hasToolBlocker(messages))
 	r.logJevResult(jcfg.Mode, keyword, scenario, res)
+	return jevScenarioResult(scenario, keyword, res, "")
+}
+
+// jevCached serves a turn with no authored text (tool output only) from the
+// decision Jev made for the latest authored user message, so a task keeps its
+// model through a tool loop. Nothing is sent to Jev.
+func (r *ModelRouter) jevCached(messages []MessageContent, keyword ScenarioResult) (ScenarioResult, bool) {
+	text := latestAuthoredText(messages)
+	if text == "" {
+		return ScenarioResult{}, false
+	}
+	res, ok := r.jev.cache.get(jevKey(text))
+	if !ok {
+		return ScenarioResult{}, false
+	}
+	scenario := jevScenarioForLevel(res.Level, hasToolBlocker(messages))
+	r.jev.log().Debug("jev routing reused earlier decision", "jev_level", res.Level, "jev_scenario", scenario)
+	return jevScenarioResult(scenario, keyword, res, " (reused for tool-result turn)"), true
+}
+
+func jevScenarioResult(scenario Scenario, keyword ScenarioResult, res JevResult, note string) ScenarioResult {
 	return ScenarioResult{
 		Scenario:   scenario,
 		TokenCount: keyword.TokenCount,
-		Reason:     fmt.Sprintf("semantic classifier level %d (%s)", res.Level, jevLevelLabels[res.Level]),
+		Reason:     fmt.Sprintf("semantic classifier level %d (%s)%s", res.Level, jevLevelLabels[res.Level], note),
 	}
 }
 

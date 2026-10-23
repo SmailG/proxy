@@ -70,6 +70,8 @@ Which models take the Anthropic endpoint depends on the provider:
 | `kimi-k2.6` | Go | 256K | 8192 | yes | General purpose, common fallback |
 | `kimi-k2.5` | Go | 256K | 8192 | yes | Previous-generation Kimi fallback |
 | `minimax-m3` | Go | 1M | 128000 | no | Long-context scenario in the shipped config |
+| `minimax-m3.1-flash` | Go | 1M | 512000 | no | Cheap fast MiniMax (Chat Completions endpoint) |
+| `minimax-m3.1-flash-free` | Go | 1M | 512000 | no | Free background / fast scenario, Jev routing tests |
 | `minimax-m2.7` | Go | 200K | 8192 | no | Previous MiniMax generation |
 | `minimax-m2.5` | Go | 200K | 4096 | no | Older MiniMax generation |
 | `mimo-v2.5-pro` | Go | 1M | 16384 | no | Step-by-step reasoning, larger output |

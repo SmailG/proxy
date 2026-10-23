@@ -25,7 +25,7 @@ For migration, `~/.config/oc-go-cc/config.json` is loaded when the new config fi
     "enabled": false,
     "mode": "shadow",
     "model": "jev-1.13.0",
-    "timeout_ms": 300,
+    "timeout_ms": 800,
     "api_key_env": "TYPESAFE_AI_API_KEY",
     "base_url": "https://api.typesafe.ai"
   },
@@ -184,7 +184,7 @@ Scenario routing decides `complex`, `think` and `background` with substring keyw
 | `enabled` | `false` | Turn the classifier on. A disabled block changes nothing. It only runs for requests that reach scenario routing: a request with a non-empty `model` is resolved by `respect_requested_model` first (see **What runs first**). |
 | `mode` | `"shadow"` | `"shadow"` logs what Jev would choose and routes as before; `"active"` lets Jev decide. |
 | `model` | `"jev-1.13.0"` | TypeSafe model id sent in the request. |
-| `timeout_ms` | `300` | Deadline for the call, 1 to 10000. |
+| `timeout_ms` | `800` | Deadline for the call, 1 to 10000. |
 | `api_key_env` | `"TYPESAFE_AI_API_KEY"` | **Name** of the environment variable that holds the API key. The key is read from the environment on each call; it is never stored in the config file or logged. A value that is not a plain variable name fails the load when `enabled` is `true` (a disabled block is not validated). |
 | `base_url` | `"https://api.typesafe.ai"` | TypeSafe API base URL. Must be `https`, except `http` is accepted for a loopback host (`localhost`, `127.0.0.0/8`, `::1`) so a local stub or tunnel works: the key and the prompt text travel here, so no cleartext off the machine. Redirects are never followed; a 3xx is a failed call and the keyword result stands. |
 
@@ -206,7 +206,7 @@ level=INFO msg="jev routing" mode=shadow keyword_scenario=complex jev_level=1 je
 
 **Active mode.** Jev replaces the keyword decision: level 2 (needs design or deep reasoning) is `complex`, level 1 (ordinary coding work) is `default`, level 0 (trivial or read-only) is `background` only if the keyword matcher's no-tool precondition holds (none of its tool or file-changing words such as `edit`, `write` or `tool` appear in any message of the conversation, tool output included, so in a long tool-using session level 0 mostly lands on `default`), otherwise `default`. The request waits for Jev, at most `timeout_ms`.
 
-**Limits of active mode.** (1) A turn that only carries tool output has no authored text, so nothing is sent for it. Active mode reuses Jev's decision for the latest authored user message (kept in memory for 30 minutes, at most 256 entries, keyed by a hash of the text), so a task keeps its model through a tool loop; if no decision is cached (expired, or the text was never classified) the keyword result stands. (1a) Claude Code streams, so active mode needs `enable_streaming_scenario_routing: true`; with the default `false` a stream routes to `fast` without a Jev call, and the startup notice warns about it. Recommended `timeout_ms` for active mode is 800 to 1000. (2) `think` is not reachable in active mode on the non-streaming path (Jev's three levels map to `background`, `default` and `complex`), and `agree` is always `false` in a log line whose keyword scenario is `think`. (3) The default `timeout_ms` of 300 is tight for a cold connection; measured classifier latency was 158 to 263 ms.
+**Limits of active mode.** (1) A turn that only carries tool output has no authored text, so nothing is sent for it. Active mode reuses Jev's decision for the latest authored user message (kept in memory for 30 minutes, at most 256 entries, keyed by a hash of the text), so a task keeps its model through a tool loop; if no decision is cached (expired, or the text was never classified) the keyword result stands. (1a) Claude Code streams, so active mode needs `enable_streaming_scenario_routing: true`; with the default `false` a stream routes to `fast` without a Jev call, and the startup notice warns about it. The default `timeout_ms` is 800; in active mode the request waits up to that long when Jev is slow or failing. (2) `think` is not reachable in active mode on the non-streaming path (Jev's three levels map to `background`, `default` and `complex`), and `agree` is always `false` in a log line whose keyword scenario is `think`. (3) Measured classifier latency was 158 to 455 ms, so a 300 ms deadline is tight for a cold connection.
 
 **Fail-open.** A missing key, timeout, network error, non-200 response (including 401, 429, 5xx), malformed body or out-of-range value falls back to the keyword result and logs a warning with the reason (never the key or the response body). Warnings are throttled per distinct reason: the first occurrence logs immediately, then at most one line per minute for that reason, carrying `suppressed=N` for the occurrences it skipped. A missing key or a Jev outage is therefore one line a minute, not one per request.
 

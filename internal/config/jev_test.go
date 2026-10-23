@@ -39,8 +39,8 @@ func TestJevRouting_DefaultsWhenBlockAbsent(t *testing.T) {
 	if j.Model != "jev-1.13.0" {
 		t.Errorf("Model = %q, want jev-1.13.0", j.Model)
 	}
-	if j.TimeoutMs != 300 {
-		t.Errorf("TimeoutMs = %d, want 300", j.TimeoutMs)
+	if j.TimeoutMs != 800 {
+		t.Errorf("TimeoutMs = %d, want 800", j.TimeoutMs)
 	}
 	if j.APIKeyEnv != "TYPESAFE_AI_API_KEY" {
 		t.Errorf("APIKeyEnv = %q, want TYPESAFE_AI_API_KEY", j.APIKeyEnv)

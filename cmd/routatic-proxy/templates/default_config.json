@@ -11,9 +11,9 @@
   },
   "jev_routing": {
     "enabled": false,
-    "mode": "shadow",
+    "mode": "active",
     "model": "jev-1.13.0",
-    "timeout_ms": 300,
+    "timeout_ms": 800,
     "api_key_env": "TYPESAFE_AI_API_KEY",
     "base_url": "https://api.typesafe.ai"
   },

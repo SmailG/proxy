@@ -198,6 +198,12 @@ func serveCmd() *cobra.Command {
 			} else {
 				fmt.Printf("Forwarding to: %s\n", cfg.OpenCodeGo.BaseURL)
 			}
+			if cfg.JevRouting.Enabled {
+				fmt.Printf("Jev routing (%s): the first 600 characters of the latest user message are sent to %s\n", cfg.JevRouting.Mode, cfg.JevRouting.BaseURL)
+				if cfg.JevRouting.Mode == config.JevModeActive && !cfg.EnableStreamingScenarioRouting {
+					fmt.Println("Warning: jev_routing is active but enable_streaming_scenario_routing is false: streaming requests (Claude Code) route to fast and never reach Jev. Set it to true.")
+				}
+			}
 			fmt.Println()
 			fmt.Println("Configure Claude Code with:")
 			fmt.Printf("  export ANTHROPIC_BASE_URL=http://%s:%d\n", cfg.Host, cfg.Port)

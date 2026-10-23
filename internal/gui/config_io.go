@@ -57,6 +57,11 @@ func anonymizeMap(m map[string]interface{}) {
 
 func shouldAnonymize(key string) bool {
 	lowerKey := strings.ToLower(key)
+	// api_key_env is the NAME of an environment variable, not a secret; redacting
+	// it would make an exported config unloadable once imported.
+	if lowerKey == "api_key_env" {
+		return false
+	}
 	for _, pattern := range sensitiveFieldPatterns {
 		if pattern.MatchString(lowerKey) {
 			return true
@@ -128,6 +133,12 @@ func (s *Server) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Apply {
+		// Validate before touching the file: Reload would reject a bad block only
+		// after it had already replaced a working config on disk.
+		if err := config.CheckJevRouting(cfg.JevRouting); err != nil {
+			http.Error(w, fmt.Sprintf("invalid config: %v", err), http.StatusBadRequest)
+			return
+		}
 		configPath := s.atomicCfg.Path()
 		data, err := json.MarshalIndent(cfg, "", "  ")
 		if err != nil {

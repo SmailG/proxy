@@ -31,6 +31,7 @@ type ModelRouter struct {
 	refreshDone  chan struct{}
 	updateSignal chan struct{}
 	refreshWG    sync.WaitGroup
+	jev          jevRuntime
 }
 
 func NewModelRouter(atomic *config.AtomicConfig) *ModelRouter {
@@ -351,6 +352,19 @@ func (r *ModelRouter) Route(messages []MessageContent, tokenCount int, requested
 // not carry. A tool-heavy request routes to complex regardless of its text --
 // see toolHeavyThreshold.
 func (r *ModelRouter) RouteWithTools(messages []MessageContent, tokenCount, toolCount int, requestedModel string) (RouteResult, error) {
+	return r.routeWithTools(messages, tokenCount, toolCount, requestedModel, true)
+}
+
+// RouteWithToolsNoJev is RouteWithTools without the opt-in Jev classifier: the
+// scenario is always the keyword/exact-check result. The handler uses it for the
+// safety-net chain behind a model override, where the override already chose the
+// primary and the chain only orders fallbacks, so no request text may leave the
+// process and no request may wait on Jev for it.
+func (r *ModelRouter) RouteWithToolsNoJev(messages []MessageContent, tokenCount, toolCount int, requestedModel string) (RouteResult, error) {
+	return r.routeWithTools(messages, tokenCount, toolCount, requestedModel, false)
+}
+
+func (r *ModelRouter) routeWithTools(messages []MessageContent, tokenCount, toolCount int, requestedModel string, useJev bool) (RouteResult, error) {
 	cfg := r.atomic.Get()
 	facts := AnalyzeRequestFacts(messages)
 
@@ -361,7 +375,12 @@ func (r *ModelRouter) RouteWithTools(messages []MessageContent, tokenCount, tool
 	}
 
 	// Otherwise, use scenario-based routing
-	result := DetectScenarioWithTools(messages, tokenCount, toolCount, cfg)
+	var result ScenarioResult
+	if useJev {
+		result = r.detectScenario(messages, tokenCount, toolCount, cfg)
+	} else {
+		result = DetectScenarioWithTools(messages, tokenCount, toolCount, cfg)
+	}
 	scenarioKey := string(result.Scenario)
 	trigger := fmt.Sprintf("scenario=%s (%s)", result.Scenario, result.Reason)
 
@@ -578,6 +597,16 @@ func (rr *RouteResult) GetModelChain() []config.ModelConfig {
 // Prioritizes fast TTFT (time-to-first-token) over capability.
 // If respect_requested_model is enabled and requestedModel is provided, it overrides scenario-based routing.
 func (r *ModelRouter) RouteForStreaming(messages []MessageContent, tokenCount int, requestedModel string) (RouteResult, error) {
+	return r.routeForStreaming(messages, tokenCount, requestedModel, true)
+}
+
+// RouteForStreamingNoJev is RouteForStreaming without the shadow Jev call; see
+// RouteWithToolsNoJev for why the override safety-net chain needs it.
+func (r *ModelRouter) RouteForStreamingNoJev(messages []MessageContent, tokenCount int, requestedModel string) (RouteResult, error) {
+	return r.routeForStreaming(messages, tokenCount, requestedModel, false)
+}
+
+func (r *ModelRouter) routeForStreaming(messages []MessageContent, tokenCount int, requestedModel string, useJev bool) (RouteResult, error) {
 	cfg := r.atomic.Get()
 
 	if result, ok, err := r.resolveRequestedModel(cfg, requestedModel, false); err != nil {
@@ -587,6 +616,9 @@ func (r *ModelRouter) RouteForStreaming(messages []MessageContent, tokenCount in
 	}
 
 	// Otherwise, use scenario-based routing for streaming
+	if useJev {
+		r.jevStreamingShadow(messages, tokenCount, cfg)
+	}
 	result := RouteForStreaming(messages, tokenCount, cfg)
 	scenarioKey := string(result.Scenario)
 	trigger := fmt.Sprintf("scenario=%s (%s)", result.Scenario, result.Reason)

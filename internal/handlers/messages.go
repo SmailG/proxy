@@ -570,17 +570,11 @@ func (h *MessagesHandler) HandleMessages(w http.ResponseWriter, r *http.Request)
 
 	for _, msg := range anthropicReq.Messages {
 		blocks := msg.ContentBlocks()
-		content := extractTextFromBlocks(blocks)
-		mc := router.MessageContent{
-			Role:        msg.Role,
-			Content:     content,
-			HasImage:    blocksHaveImage(blocks),
-			ImageHashes: imageHashesFromBlocks(blocks),
-		}
-		routerMessages = append(routerMessages, mc)
+		routerMsg := routerMessageFromBlocks(msg.Role, blocks)
+		routerMessages = append(routerMessages, routerMsg)
 		tokenMessages = append(tokenMessages, token.MessageContent{
 			Role:        msg.Role,
-			Content:     content,
+			Content:     routerMsg.Content,
 			ExtraTokens: imageTokenEstimate(blocks),
 		})
 	}
@@ -706,7 +700,9 @@ func (h *MessagesHandler) buildModelChain(
 			overrideResult, ok = h.modelRouter.RouteWithFamilyOverride(requestedModel)
 		}
 		if ok {
-			scenarioResult, err := h.routeOnce(routerMessages, tokenCount, toolCount, "", isStreaming)
+			// The override already chose the primary; this call only orders the
+			// fallbacks, so it must not reach the opt-in Jev classifier.
+			scenarioResult, err := h.routeOnce(routerMessages, tokenCount, toolCount, "", isStreaming, false)
 			if err != nil {
 				return overrideResult.GetModelChain(), overrideResult, err
 			}
@@ -717,7 +713,7 @@ func (h *MessagesHandler) buildModelChain(
 
 	if chain == nil {
 		var err error
-		result, err = h.routeOnce(routerMessages, tokenCount, toolCount, requestedModel, isStreaming)
+		result, err = h.routeOnce(routerMessages, tokenCount, toolCount, requestedModel, isStreaming, true)
 		if err != nil {
 			return nil, result, err
 		}
@@ -740,16 +736,24 @@ func (h *MessagesHandler) buildModelChain(
 // toggle. Pass requestedModel="" to force scenario routing (used for the override
 // safety-net chain), or a non-empty value to let resolveRequestedModel kick in
 // (only when respect_requested_model is enabled and no override matched).
+// useJev=false keeps the opt-in Jev classifier out of the call (override chain).
 func (h *MessagesHandler) routeOnce(
 	routerMessages []router.MessageContent,
 	tokenCount int,
 	toolCount int,
 	requestedModel string,
 	isStreaming bool,
+	useJev bool,
 ) (router.RouteResult, error) {
 	if isStreaming && !h.modelRouter.IsStreamingScenarioRoutingEnabled() {
 		// Streaming: use faster models to minimize TTFT (time-to-first-token)
+		if !useJev {
+			return h.modelRouter.RouteForStreamingNoJev(routerMessages, tokenCount, requestedModel)
+		}
 		return h.modelRouter.RouteForStreaming(routerMessages, tokenCount, requestedModel)
+	}
+	if !useJev {
+		return h.modelRouter.RouteWithToolsNoJev(routerMessages, tokenCount, toolCount, requestedModel)
 	}
 	return h.modelRouter.RouteWithTools(routerMessages, tokenCount, toolCount, requestedModel)
 }
@@ -1629,6 +1633,42 @@ func extractTextFromBlocks(blocks []types.ContentBlock) string {
 		}
 	}
 	return content
+}
+
+// routerMessageFromBlocks builds the router's view of one message: Content for
+// keyword routing, PromptText (authored text only) for the opt-in Jev classifier.
+func routerMessageFromBlocks(role string, blocks []types.ContentBlock) router.MessageContent {
+	return router.MessageContent{
+		Role:        role,
+		Content:     extractTextFromBlocks(blocks),
+		PromptText:  extractPromptText(blocks),
+		HasImage:    blocksHaveImage(blocks),
+		ImageHashes: imageHashesFromBlocks(blocks),
+	}
+}
+
+// extractPromptText returns only the text blocks of a message: what the user
+// wrote, without tool_result output (file contents, command output), tool_use
+// markers or image placeholders. It feeds the opt-in Jev classifier, which
+// sends text off-machine and so must never see tool output.
+func extractPromptText(blocks []types.ContentBlock) string {
+	var text string
+	for _, block := range blocks {
+		if block.Type == "text" && !isHarnessToolEcho(block.Text) {
+			text += block.Text
+		}
+	}
+	return text
+}
+
+// isHarnessToolEcho reports whether a text block is Claude Code's own record of a
+// tool call ("Called the Read tool with the following input: {...}", "Result of
+// calling the Read tool: ..."), not something the user wrote. Those blocks carry
+// file paths and tool output and must not be sent to the Jev classifier.
+func isHarnessToolEcho(text string) bool {
+	t := strings.TrimLeft(text, " \t\r\n")
+	return strings.HasPrefix(t, "Called the ") && strings.Contains(t[:min(len(t), 120)], " tool with the following input") ||
+		strings.HasPrefix(t, "Result of calling the ")
 }
 
 func blocksHaveImage(blocks []types.ContentBlock) bool {

@@ -21,6 +21,15 @@ For migration, `~/.config/oc-go-cc/config.json` is loaded when the new config fi
     "base_url": "https://api.anthropic.com"
   },
 
+  "jev_routing": {
+    "enabled": false,
+    "mode": "active",
+    "model": "jev-1.13.0",
+    "timeout_ms": 800,
+    "api_key_env": "TYPESAFE_AI_API_KEY",
+    "base_url": "https://api.typesafe.ai"
+  },
+
   "enable_cost_based_routing": false,
   "cost_routing": {
     "enabled": true,
@@ -163,6 +172,47 @@ Fallback occurs for HTTP 408, 429, 5xx, and transport failures before a response
 Once response bytes have started, a failed stream cannot be restarted on another model without duplicating content. `/v1/messages/count_tokens` remains local and does not affect availability state.
 
 When OpenCode Go returns `GoUsageLimitError`, remaining Go models are skipped for that request and the chain advances to Zen. The default chain uses Qwen3.7 Plus, Qwen3.7 Max, then the currently working Zen-free Nemotron 3 Ultra, MiMo V2.5, and DeepSeek V4 Flash models. Free Zen endpoints are time-limited and may retain data under [OpenCode's documented privacy terms](https://opencode.ai/docs/zen/#privacy).
+
+## Jev Request Classifier (`jev_routing`)
+
+Scenario routing decides `complex`, `think` and `background` with substring keywords on the latest user message, so it misfires on negations and prose ("keep it simple, don't over-optimize" routes to `complex`). `jev_routing` is an opt-in, fail-open classifier that asks the TypeSafe System One model (Jev) what kind of work the request is. It is **off by default**.
+
+> **Privacy: when enabled, the first 600 characters of the latest user message are sent to TypeSafe (`api.typesafe.ai`) on every request that reaches keyword routing.** A request matched by `model_overrides` or `model_family_overrides` is never sent: the override already chose the model, and its fallback chain is built without Jev. Only the user's text is sent: no system prompt, earlier turns, tool results or file contents. A turn that carries only tool output (no text the user typed) is not sent at all. Claude Code's own tagged blocks (`<system-reminder>`, `<command-name>`, `<command-message>`, `<command-args>`, `<local-command-stdout>`, `<local-command-stderr>`, `<local-command-caveat>`) and its tool-call echoes (text blocks starting `Called the <X> tool with the following input` or `Result of calling the`) are removed before the 600-character cut, so they use none of the budget and are never sent; a turn that holds only those is not sent either. An opening tag with no closing tag drops that tag and everything after it (fail closed); a stray closing tag is left in place. **Whatever the user typed or pasted is sent as written**, including a file path or a pasted snippet inside the first 600 characters. Text over 64 KB is not classified at all. Do not enable it for sessions whose prompts must not leave your machine. When it is enabled the proxy prints this notice at startup.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `false` | Turn the classifier on. A disabled block changes nothing. It only runs for requests that reach scenario routing: a request with a non-empty `model` is resolved by `respect_requested_model` first (see **What runs first**). |
+| `mode` | `"active"` | `"active"` lets Jev decide (waits at most `timeout_ms`, falls back to the keyword result on any failure); `"shadow"` only logs what Jev would choose and routes as before. `enabled` stays `false` by default, so nothing is sent until you turn it on. |
+| `model` | `"jev-1.13.0"` | TypeSafe model id sent in the request. |
+| `timeout_ms` | `800` | Deadline for the call, 1 to 10000. |
+| `api_key_env` | `"TYPESAFE_AI_API_KEY"` | **Name** of the environment variable that holds the API key. The key is read from the environment on each call; it is never stored in the config file or logged. A value that is not a plain variable name fails the load when `enabled` is `true` (a disabled block is not validated). |
+| `base_url` | `"https://api.typesafe.ai"` | TypeSafe API base URL. Must be `https`, except `http` is accepted for a loopback host (`localhost`, `127.0.0.0/8`, `::1`) so a local stub or tunnel works: the key and the prompt text travel here, so no cleartext off the machine. Redirects are never followed; a 3xx is a failed call and the keyword result stands. |
+
+```bash
+export TYPESAFE_AI_API_KEY=...   # set in the environment the proxy starts from
+```
+
+**What runs first.** The exact checks stay ahead of Jev and are unchanged: token count above the long-context threshold, a new image, and a tool count at or above the tool-heavy threshold. Jev only sees requests those leave undecided.
+
+**Requests that name a model.** Before scenario routing, a request with a non-empty `model` is resolved by `respect_requested_model`. When that option is unset or `true` (the default), the requested model is used and scenario routing is skipped, so Jev is never called for it; Jev runs for such requests only when `respect_requested_model` is `false`. A request with an empty `model` goes straight to scenario routing. (A `model_overrides` / `model_family_overrides` match also skips Jev, see **Overrides**.)
+
+**Shadow mode.** The route is still the keyword scenario. Jev runs in a background goroutine, so the request is never delayed: `timeout_ms` bounds the background call, not the request. At most 16 classifications are in flight; a request over that bound is simply not sampled (logged as a warning, throttled like the other warnings). Each completed call logs one line:
+
+```
+level=INFO msg="jev routing" mode=shadow keyword_scenario=complex jev_level=1 jev_scenario=default architecture_prob=0.12 agree=false latency_ms=212
+```
+
+`architecture_prob` is a second question ("does the request ask for an architecture-level or multi-component change?") and is for the log only; it does not affect routing. Set `mode` to `shadow` to run it for a while and compare `agree=false` lines before switching to `active`.
+
+**Active mode.** Jev replaces the keyword decision: level 2 (needs design or deep reasoning) is `complex`, level 1 (ordinary coding work) is `default`, level 0 (trivial or read-only) is `background` only if the keyword matcher's no-tool precondition holds (none of its tool or file-changing words such as `edit`, `write` or `tool` appear in any message of the conversation, tool output included, so in a long tool-using session level 0 mostly lands on `default`), otherwise `default`. The request waits for Jev, at most `timeout_ms`.
+
+**Limits of active mode.** (1) A turn that only carries tool output has no authored text, so nothing is sent for it. Active mode reuses Jev's decision for the latest authored user message (kept in memory for 30 minutes, at most 256 entries, keyed by a hash of the text), so a task keeps its model through a tool loop; if no decision is cached (expired, or the text was never classified) the keyword result stands. (1a) Claude Code streams, so active mode needs `enable_streaming_scenario_routing: true`; with the default `false` a stream routes to `fast` without a Jev call, and the startup notice warns about it. The default `timeout_ms` is 800; in active mode the request waits up to that long when Jev is slow or failing. (2) `think` is not reachable in active mode on the non-streaming path (Jev's three levels map to `background`, `default` and `complex`), and `agree` is always `false` in a log line whose keyword scenario is `think`. (3) Measured classifier latency was 158 to 455 ms, so a 300 ms deadline is tight for a cold connection.
+
+**Fail-open.** A missing key, timeout, network error, non-200 response (including 401, 429, 5xx), malformed body or out-of-range value falls back to the keyword result and logs a warning with the reason (never the key or the response body). Warnings are throttled per distinct reason: the first occurrence logs immediately, then at most one line per minute for that reason, carrying `suppressed=N` for the occurrences it skipped. A missing key or a Jev outage is therefore one line a minute, not one per request.
+
+**Overrides.** When `model_overrides` or `model_family_overrides` matches, the override is the primary and the scenario chain behind it is built by `RouteWithToolsNoJev` / `RouteForStreamingNoJev`, which never call Jev, so the fallback order is the same as without `jev_routing` and no text is sent.
+
+**Streaming.** A streaming request goes through `RouteWithTools` (and so through Jev, in either mode) only when `enable_streaming_scenario_routing` is `true`. With the default `false` it takes the streaming path, which routes to `fast`. In **shadow** mode that path now also makes the same background Jev call and logs the same line (agree, levels, latency), so Claude Code streams are sampled; `keyword_scenario` in the line is what the keyword matcher decides for the text, not the `fast` scenario the stream is sent to. It shares the 16-slot bound and `timeout_ms`, skips what the non-streaming path skips (long-context or image requests, turns with no authored text), and never delays the request. The tool-heavy check is not applied there because the streaming path does not know the tool count. The route is unchanged, including the complex/think downgrade to `fast`. In **active** mode the streaming path still makes no Jev call and routes to `fast` as before.
 
 ## Providers
 

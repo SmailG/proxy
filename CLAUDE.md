@@ -70,6 +70,8 @@ Which models take the Anthropic endpoint depends on the provider:
 | `kimi-k2.6` | Go | 256K | 8192 | yes | General purpose, common fallback |
 | `kimi-k2.5` | Go | 256K | 8192 | yes | Previous-generation Kimi fallback |
 | `minimax-m3` | Go | 1M | 128000 | no | Long-context scenario in the shipped config |
+| `minimax-m3.1-flash` | Go | 1M | 512000 | no | Cheap fast MiniMax (Chat Completions endpoint) |
+| `minimax-m3.1-flash-free` | Go | 1M | 512000 | no | Free background / fast scenario, Jev routing tests |
 | `minimax-m2.7` | Go | 200K | 8192 | no | Previous MiniMax generation |
 | `minimax-m2.5` | Go | 200K | 4096 | no | Older MiniMax generation |
 | `mimo-v2.5-pro` | Go | 1M | 16384 | no | Step-by-step reasoning, larger output |
@@ -99,6 +101,8 @@ The three vision scenarios are `ScenarioVision`, `ScenarioVisionComplex`, and `S
 The `Reason` strings in `scenarios.go` describe only *why* a scenario matched and name no model. The resolved model is appended by `ModelRouter.Route` / `RouteForStreaming` (`describeRouting`), so the routing log line always reports the model that actually came from config — e.g. `scenario=complex (complex or tool-based operation keywords in latest user message) -> resolved model glm-5.2`. A test asserts detector reasons never name a model, so they cannot drift again.
 
 **Model overrides:** two config blocks bypass scenario routing based on the requested model. `model_overrides` matches the `model` string **exactly** (best with CC-Switch, which sends a custom model string). `model_family_overrides` maps a Claude family keyword (`opus`, `sonnet`, `haiku`) via **case-insensitive substring** match, so the versioned IDs Claude Code sends natively (`claude-opus-4-20250514`) route without CC-Switch. Precedence: exact `model_overrides` → `model_family_overrides` (longest key first) → `respect_requested_model` → scenario routing. Both are wired through `ModelRouter.RouteWithOverride` / `RouteWithFamilyOverride` (`internal/router/model_router.go`) and merged with a deduplicated scenario safety-net chain in `buildModelChain` (`internal/handlers/messages.go`). Override entries accept any provider `models` and `fallbacks` accept — `opencode-go`, `opencode-zen`, `aws-bedrock`, `openrouter` (underscore spellings normalized) — validated against `config.KnownProviders` in `internal/config/provider.go`, which is the single source for provider names and `NormalizeProvider`; `client.Provider*` are aliases of those constants.
+
+**Opt-in Jev classifier (`jev_routing`, off by default):** `internal/router/jev_routing.go` and `jev_classifier.go` add a semantic read of the latest user message beside (shadow) or instead of (active) the keyword matcher, after the exact checks. It is fail-open and sends the first 600 characters of authored user text to TypeSafe, never tool output; requests matched by a model override use `RouteWithToolsNoJev` / `RouteForStreamingNoJev` and never reach it. Details and privacy notes: CONFIGURATION.md § Jev Request Classifier.
 
 **Cost-based routing:** when `cost_routing.enabled` is set, `Selector` in `internal/router/selector.go` replaces the static primary model with automatic cheapest-model selection from the catalog. It applies `max_context_window` (hard cap on context window), `prefer_providers` (global provider filter, intersected with per-scenario preferences), and `penalty_per_provider` (per-provider cost penalty added during sort). Enabled via `cost_routing.enabled` or the legacy `enable_cost_based_routing` flag.
 

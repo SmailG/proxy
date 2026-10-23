@@ -181,7 +181,7 @@ Scenario routing decides `complex`, `think` and `background` with substring keyw
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `enabled` | `false` | Turn the classifier on. A disabled block changes nothing. |
+| `enabled` | `false` | Turn the classifier on. A disabled block changes nothing. It only runs for requests that reach scenario routing: a request with a non-empty `model` is resolved by `respect_requested_model` first (see **What runs first**). |
 | `mode` | `"shadow"` | `"shadow"` logs what Jev would choose and routes as before; `"active"` lets Jev decide. |
 | `model` | `"jev-1.13.0"` | TypeSafe model id sent in the request. |
 | `timeout_ms` | `300` | Deadline for the call, 1 to 10000. |
@@ -193,6 +193,8 @@ export TYPESAFE_AI_API_KEY=...   # set in the environment the proxy starts from
 ```
 
 **What runs first.** The exact checks stay ahead of Jev and are unchanged: token count above the long-context threshold, a new image, and a tool count at or above the tool-heavy threshold. Jev only sees requests those leave undecided.
+
+**Requests that name a model.** Before scenario routing, a request with a non-empty `model` is resolved by `respect_requested_model`. When that option is unset or `true` (the default), the requested model is used and scenario routing is skipped, so Jev is never called for it; Jev runs for such requests only when `respect_requested_model` is `false`. A request with an empty `model` goes straight to scenario routing. (A `model_overrides` / `model_family_overrides` match also skips Jev, see **Overrides**.)
 
 **Shadow mode.** The route is still the keyword scenario. Jev runs in a background goroutine, so the request is never delayed: `timeout_ms` bounds the background call, not the request. At most 16 classifications are in flight; a request over that bound is simply not sampled (logged as a warning, throttled like the other warnings). Each completed call logs one line:
 

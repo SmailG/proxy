@@ -19,8 +19,8 @@ func TestDefaultConfigJevRoutingIsOffAndMatchesExample(t *testing.T) {
 	if enabled, _ := defJev["enabled"].(bool); enabled {
 		t.Error("jev_routing.enabled must be false in the default config template")
 	}
-	if defJev["mode"] != "shadow" {
-		t.Errorf("default mode = %v, want shadow", defJev["mode"])
+	if defJev["mode"] != "active" {
+		t.Errorf("default mode = %v, want active", defJev["mode"])
 	}
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "configs", "config.example.json"))

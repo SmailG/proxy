@@ -205,7 +205,7 @@ func OpenAIResponseToNormalized(openaiResp *types.ChatCompletionResponse, modelI
 		// Extract tool calls.
 		for _, tc := range msg.ToolCalls {
 			nm.Blocks = append(nm.Blocks, core.NormalizedContentBlock{
-				Type: "tool_use", ID: tc.ID, Name: tc.Function.Name,
+				Type: "tool_use", ID: sanitizeToolID(tc.ID), Name: tc.Function.Name,
 				Input: []byte(tc.Function.Arguments),
 			})
 		}
@@ -263,7 +263,7 @@ func ResponsesToNormalized(responsesResp *types.ResponsesResponse, modelID strin
 			nm := core.NormalizedMessage{
 				Role: "assistant",
 				Blocks: []core.NormalizedContentBlock{{
-					Type: "tool_use", ID: output.CallID, Name: output.Name,
+					Type: "tool_use", ID: sanitizeToolID(output.CallID), Name: output.Name,
 					Input: []byte(normalizeToolArguments(output.Arguments)),
 				}},
 			}

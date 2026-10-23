@@ -23,7 +23,7 @@ For migration, `~/.config/oc-go-cc/config.json` is loaded when the new config fi
 
   "jev_routing": {
     "enabled": false,
-    "mode": "shadow",
+    "mode": "active",
     "model": "jev-1.13.0",
     "timeout_ms": 800,
     "api_key_env": "TYPESAFE_AI_API_KEY",
@@ -182,7 +182,7 @@ Scenario routing decides `complex`, `think` and `background` with substring keyw
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `false` | Turn the classifier on. A disabled block changes nothing. It only runs for requests that reach scenario routing: a request with a non-empty `model` is resolved by `respect_requested_model` first (see **What runs first**). |
-| `mode` | `"shadow"` | `"shadow"` logs what Jev would choose and routes as before; `"active"` lets Jev decide. |
+| `mode` | `"active"` | `"active"` lets Jev decide (waits at most `timeout_ms`, falls back to the keyword result on any failure); `"shadow"` only logs what Jev would choose and routes as before. `enabled` stays `false` by default, so nothing is sent until you turn it on. |
 | `model` | `"jev-1.13.0"` | TypeSafe model id sent in the request. |
 | `timeout_ms` | `800` | Deadline for the call, 1 to 10000. |
 | `api_key_env` | `"TYPESAFE_AI_API_KEY"` | **Name** of the environment variable that holds the API key. The key is read from the environment on each call; it is never stored in the config file or logged. A value that is not a plain variable name fails the load when `enabled` is `true` (a disabled block is not validated). |
@@ -202,7 +202,7 @@ export TYPESAFE_AI_API_KEY=...   # set in the environment the proxy starts from
 level=INFO msg="jev routing" mode=shadow keyword_scenario=complex jev_level=1 jev_scenario=default architecture_prob=0.12 agree=false latency_ms=212
 ```
 
-`architecture_prob` is a second question ("does the request ask for an architecture-level or multi-component change?") and is for the log only; it does not affect routing. Run shadow mode for a while and compare `agree=false` lines before switching to `active`.
+`architecture_prob` is a second question ("does the request ask for an architecture-level or multi-component change?") and is for the log only; it does not affect routing. Set `mode` to `shadow` to run it for a while and compare `agree=false` lines before switching to `active`.
 
 **Active mode.** Jev replaces the keyword decision: level 2 (needs design or deep reasoning) is `complex`, level 1 (ordinary coding work) is `default`, level 0 (trivial or read-only) is `background` only if the keyword matcher's no-tool precondition holds (none of its tool or file-changing words such as `edit`, `write` or `tool` appear in any message of the conversation, tool output included, so in a long tool-using session level 0 mostly lands on `default`), otherwise `default`. The request waits for Jev, at most `timeout_ms`.
 

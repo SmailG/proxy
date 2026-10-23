@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- Opt-in `jev_routing` classifier (TypeSafe System One, shadow-first, fail-open): classifies the latest user message semantically instead of by substring keywords. Off by default; when enabled the first 600 characters of the latest user message are sent to TypeSafe. See CONFIGURATION.md
+- Opt-in `jev_routing` classifier (TypeSafe System One, active by default once enabled, fail-open): classifies the latest user message semantically instead of by substring keywords. Off by default; when enabled the first 600 characters of the latest user message are sent to TypeSafe. See CONFIGURATION.md
 - `jev_routing` active mode reuses Jev's decision for tool-result-only turns (in-memory, 30 min, 256 entries, hash key; nothing extra is sent); startup warns when active mode is set with `enable_streaming_scenario_routing` false
 - Registry: `minimax-m3.1-flash` and `minimax-m3.1-flash-free` (Go provider, Chat Completions, 1M context)
 - `jev_routing` shadow mode now also samples streaming requests (the path Claude Code uses): same background call, bound, timeout and log line; the streaming route is unchanged and active mode still makes no Jev call on streams

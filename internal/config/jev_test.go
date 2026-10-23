@@ -33,8 +33,8 @@ func TestJevRouting_DefaultsWhenBlockAbsent(t *testing.T) {
 	if j.Enabled {
 		t.Error("jev_routing must be disabled by default")
 	}
-	if j.Mode != JevModeShadow {
-		t.Errorf("Mode = %q, want %q", j.Mode, JevModeShadow)
+	if j.Mode != JevModeActive {
+		t.Errorf("Mode = %q, want %q", j.Mode, JevModeActive)
 	}
 	if j.Model != "jev-1.13.0" {
 		t.Errorf("Model = %q, want jev-1.13.0", j.Model)

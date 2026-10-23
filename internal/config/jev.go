@@ -47,7 +47,7 @@ type JevRoutingConfig struct {
 
 func applyJevDefaults(j *JevRoutingConfig) {
 	if j.Mode == "" {
-		j.Mode = JevModeShadow
+		j.Mode = JevModeActive
 	}
 	if j.Model == "" {
 		j.Model = defaultJevModel

@@ -622,10 +622,7 @@ func (h *StreamHandler) processSSELine(
 				blockIdx = *contentIndex
 				startedToolCalls[oi] = blockIdx
 
-				toolID := tc.ID
-				if toolID == "" {
-					toolID = fmt.Sprintf("toolu_%s", generateID())
-				}
+				toolID := sanitizeToolID(tc.ID)
 				startEvent := types.MessageEvent{
 					Type:  "content_block_start",
 					Index: &blockIdx,
@@ -1056,10 +1053,7 @@ func (h *StreamHandler) processResponsesSSELine(
 		toolArguments[fc.ID] = arguments
 		*hasToolUse = true
 
-		toolID := fc.CallID
-		if toolID == "" {
-			toolID = fmt.Sprintf("toolu_%s", generateID())
-		}
+		toolID := sanitizeToolID(fc.CallID)
 		startEvent := types.MessageEvent{
 			Type:  "content_block_start",
 			Index: &blockIdx,

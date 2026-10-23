@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Tool-call ids are rewritten to Anthropic's allowed set (`[a-zA-Z0-9_-]`) in replies: kimi-k3 returns ids like `read_file:0`, which Anthropic-side checks of the saved history (compaction, the advisor tool) reject with a 400
 - Opt-in `jev_routing` classifier (TypeSafe System One, active by default once enabled, fail-open): classifies the latest user message semantically instead of by substring keywords. Off by default; when enabled the first 600 characters of the latest user message are sent to TypeSafe. See CONFIGURATION.md
 - `jev_routing` active mode reuses Jev's decision for tool-result-only turns (in-memory, 30 min, 256 entries, hash key; nothing extra is sent); startup warns when active mode is set with `enable_streaming_scenario_routing` false
 - Registry: `minimax-m3.1-flash` and `minimax-m3.1-flash-free` (Go provider, Chat Completions, 1M context)

@@ -101,7 +101,7 @@ func (t *ResponseTransformer) transformContent(msg types.ChatMessage) ([]types.C
 
 		blocks = append(blocks, types.ContentBlock{
 			Type:  "tool_use",
-			ID:    tc.ID,
+			ID:    sanitizeToolID(tc.ID),
 			Name:  tc.Function.Name,
 			Input: inputJSON,
 		})
@@ -204,7 +204,7 @@ func (t *ResponseTransformer) TransformResponsesResponse(
 			}
 			contentBlocks = append(contentBlocks, types.ContentBlock{
 				Type:  "tool_use",
-				ID:    output.CallID,
+				ID:    sanitizeToolID(output.CallID),
 				Name:  output.Name,
 				Input: inputJSON,
 			})

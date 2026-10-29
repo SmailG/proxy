@@ -30,7 +30,15 @@ const (
 	defaultZenResponsesBaseURL = "https://opencode.ai/zen/v1/responses"
 	defaultZenGeminiBaseURL    = "https://opencode.ai/zen/v1/models"
 
-	defaultOpenRouterBaseURL = "https://openrouter.ai/api/v1"
+	// defaultOpenRouterBaseURL must be the full Chat Completions URL: getEndpoint
+	// posts to OpenRouter's BaseURL verbatim, so a bare /api/v1 would 404.
+	defaultOpenRouterBaseURL = "https://openrouter.ai/api/v1/chat/completions"
+
+	// defaultModelStudioBaseURL is the Alibaba Cloud Model Studio (international)
+	// OpenAI-compatible Chat Completions endpoint. The Token Plan gateway is a
+	// different host — set model_studio.base_url (and anthropic_base_url) for it,
+	// or start from configs/config.token-plan.json, which does.
+	defaultModelStudioBaseURL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
 )
 
 // envVarPattern matches ${ENV_VAR} placeholders in config values.
@@ -204,6 +212,24 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.OpenRouter.APIKey = ""
 	}
 
+	if v := envValue("ROUTATIC_PROXY_MODEL_STUDIO_API_KEY"); v != "" {
+		cfg.ModelStudio.APIKey = v
+		cfg.ModelStudio.APIKeys = nil
+	}
+	if v := envValue("ROUTATIC_PROXY_MODEL_STUDIO_API_KEYS"); v != "" {
+		cfg.ModelStudio.APIKeys = parseCommaSeparatedKeys(v)
+		cfg.ModelStudio.APIKey = ""
+	}
+	if v := envValue("ROUTATIC_PROXY_MODEL_STUDIO_URL"); v != "" {
+		cfg.ModelStudio.BaseURL = v
+	}
+	// Overriding only base_url does not move traffic when anthropic_base_url is
+	// also set, because WireFormat prefers the Anthropic endpoint — so the
+	// gateway switch needs both.
+	if v := envValue("ROUTATIC_PROXY_MODEL_STUDIO_ANTHROPIC_URL"); v != "" {
+		cfg.ModelStudio.AnthropicBaseURL = v
+	}
+
 	if v := envValue("ROUTATIC_PROXY_HOST"); v != "" {
 		cfg.Host = v
 	}
@@ -282,6 +308,19 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.OpenRouter.BaseURL == "" {
 		cfg.OpenRouter.BaseURL = defaultOpenRouterBaseURL
+	}
+	if cfg.ModelStudio.BaseURL == "" {
+		cfg.ModelStudio.BaseURL = defaultModelStudioBaseURL
+	}
+	if cfg.ModelStudio.TimeoutMs == 0 {
+		cfg.ModelStudio.TimeoutMs = defaultTimeoutMs
+	}
+	if cfg.ModelStudio.StreamTimeoutMs == 0 {
+		if cfg.ModelStudio.StreamingTimeoutMs > 0 {
+			cfg.ModelStudio.StreamTimeoutMs = cfg.ModelStudio.StreamingTimeoutMs
+		} else {
+			cfg.ModelStudio.StreamTimeoutMs = cfg.ModelStudio.TimeoutMs
+		}
 	}
 	if cfg.OpenCodeZen.TimeoutMs == 0 {
 		cfg.OpenCodeZen.TimeoutMs = defaultTimeoutMs
@@ -365,6 +404,13 @@ func validate(cfg *Config) error {
 	}
 	if err := validateAPIKeys(cfg.OpenRouter.APIKeys); err != nil {
 		return fmt.Errorf("openrouter.api_keys: %w", err)
+	}
+
+	if err := validateSingleAPIKey(cfg.ModelStudio.APIKey); err != nil {
+		return fmt.Errorf("model_studio.api_key: %w", err)
+	}
+	if err := validateAPIKeys(cfg.ModelStudio.APIKeys); err != nil {
+		return fmt.Errorf("model_studio.api_keys: %w", err)
 	}
 
 	if err := validateModelOverrides(cfg.ModelOverrides); err != nil {

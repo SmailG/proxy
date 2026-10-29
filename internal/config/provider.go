@@ -7,14 +7,15 @@ import (
 
 // Canonical provider identifiers. These are the values accepted in a
 // ModelConfig's `provider` field, and they name the upstream that serves the
-// model. config is the lowest layer that knows about all four providers (it
-// holds their connection settings), so the names live here and higher layers
-// alias them.
+// model. config is the lowest layer that knows about every provider (it holds
+// their connection settings), so the names live here and higher layers alias
+// them. KnownProviders below is the authoritative list — keep the two in step.
 const (
 	ProviderOpenCodeGo  = "opencode-go"
 	ProviderOpenCodeZen = "opencode-zen"
 	ProviderAWSBedrock  = "aws-bedrock"
 	ProviderOpenRouter  = "openrouter"
+	ProviderModelStudio = "model-studio"
 )
 
 // KnownProviders lists every canonical provider name, in the order used for
@@ -24,6 +25,7 @@ var KnownProviders = []string{
 	ProviderOpenCodeZen,
 	ProviderAWSBedrock,
 	ProviderOpenRouter,
+	ProviderModelStudio,
 }
 
 // NormalizeProvider maps a configured provider string to its canonical form.

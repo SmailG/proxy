@@ -29,6 +29,7 @@ func TransformRequestFromNormalized(req *core.NormalizedRequest, model config.Mo
 			Messages:  []types.ChatMessage{{Role: "user", Content: types.TextContent(req.SystemPrompt + "\n" + joinMessageText(req.Messages))}},
 			Stream:    &stream,
 			MaxTokens: &maxTokens,
+			ExtraBody: model.ExtraBody,
 		}
 	}
 	return openaiReq

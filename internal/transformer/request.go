@@ -157,6 +157,12 @@ func (t *RequestTransformer) TransformRequest(
 		}
 	}
 
+	// Vendor-specific top-level params (e.g. DashScope enable_thinking) are
+	// passed through verbatim; the merge happens when the request is marshaled.
+	if len(model.ExtraBody) > 0 {
+		openaiReq.ExtraBody = model.ExtraBody
+	}
+
 	return openaiReq, nil
 }
 

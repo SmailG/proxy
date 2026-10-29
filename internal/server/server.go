@@ -69,10 +69,7 @@ func NewServer(atomic *config.AtomicConfig, captureLogger *debug.CaptureLogger) 
 	fallbackHandler.SetAtomicConfig(atomic)
 
 	// Register providers.
-	providerRegistry := core.NewProviderRegistry()
-	_ = providerRegistry.Register(provider.NewOpenCodeGoProvider(atomic))
-	_ = providerRegistry.Register(provider.NewOpenCodeZenProvider(atomic))
-	_ = providerRegistry.Register(provider.NewAWSBedrockProvider(atomic))
+	providerRegistry := newProviderRegistry(atomic)
 
 	// Create status store for the statusline endpoint.
 	statusStore := status.NewStore(0)
@@ -187,6 +184,23 @@ func NewServer(atomic *config.AtomicConfig, captureLogger *debug.CaptureLogger) 
 	})
 
 	return srv, nil
+}
+
+// newProviderRegistry builds the registry every request path consults. A
+// provider missing from it is not rejected — the handlers silently fall through
+// to the legacy OpenCode client, which has no idea where its endpoint is, so a
+// new provider can appear to work while routing to the wrong host.
+// server_test.go asserts the set against config.KnownProviders.
+//
+// OpenRouter is the one known provider deliberately absent: it has no core.Provider
+// implementation and is served by the legacy client on purpose.
+func newProviderRegistry(atomic *config.AtomicConfig) *core.ProviderRegistry {
+	registry := core.NewProviderRegistry()
+	_ = registry.Register(provider.NewOpenCodeGoProvider(atomic))
+	_ = registry.Register(provider.NewOpenCodeZenProvider(atomic))
+	_ = registry.Register(provider.NewAWSBedrockProvider(atomic))
+	_ = registry.Register(provider.NewModelStudioProvider(atomic))
+	return registry
 }
 
 func configureTokenCache(counter *token.Counter, cfg *config.Config) {

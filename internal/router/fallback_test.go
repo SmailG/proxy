@@ -661,6 +661,101 @@ func TestExecuteWithFallback_AuthErrorShortCircuits(t *testing.T) {
 	}
 }
 
+func TestIsModelEntitlementError(t *testing.T) {
+	denied := &client.APIError{StatusCode: 403, Body: `{"error":{"message":"Access to model denied"}}`}
+
+	tests := []struct {
+		name     string
+		err      error
+		provider string
+		want     bool
+	}{
+		{"model-studio 403 is per-model", denied, config.ProviderModelStudio, true},
+		{"model-studio 401 is still a credential failure", &client.APIError{StatusCode: 401}, config.ProviderModelStudio, false},
+		{"model-studio 400 is not", &client.APIError{StatusCode: 400}, config.ProviderModelStudio, false},
+		{"another provider's 403 is a credential failure", denied, config.ProviderOpenCodeGo, false},
+		{"openrouter 403 is a credential failure", denied, config.ProviderOpenRouter, false},
+		{"nil error", nil, config.ProviderModelStudio, false},
+		{"non-APIError", errors.New("boom"), config.ProviderModelStudio, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsModelEntitlementError(tt.err, tt.provider); got != tt.want {
+				t.Errorf("IsModelEntitlementError(%v, %q) = %v, want %v", tt.err, tt.provider, got, tt.want)
+			}
+		})
+	}
+}
+
+// Token Plan answers 403 for a model ID outside the key's tier while the key
+// itself is valid. Blocking the whole provider there would defeat the fallback
+// chain, which exists precisely to reach the models the key CAN call.
+func TestExecuteWithFallback_ModelStudioEntitlement403ContinuesChain(t *testing.T) {
+	logger := slog.Default()
+	handler := NewFallbackHandler(logger, 3, 30*time.Second)
+
+	models := []config.ModelConfig{
+		{Provider: config.ProviderModelStudio, ModelID: "kimi-k2.6"},   // outside the tier
+		{Provider: config.ProviderModelStudio, ModelID: "qwen3.8-max"}, // inside it
+	}
+
+	denied := &client.APIError{StatusCode: 403, Body: `{"error":{"message":"Access to model denied"}}`}
+
+	var tried []string
+	_, body, err := handler.ExecuteWithFallback(context.Background(), models,
+		func(ctx context.Context, model config.ModelConfig) ([]byte, error) {
+			tried = append(tried, model.ModelID)
+			if model.ModelID == "kimi-k2.6" {
+				return nil, denied
+			}
+			return []byte(`{"ok":true}`), nil
+		},
+	)
+
+	if err != nil {
+		t.Fatalf("ExecuteWithFallback() error = %v, want the second model to succeed", err)
+	}
+	if len(tried) != 2 {
+		t.Errorf("tried %v, want both models (the 403 must not block the provider)", tried)
+	}
+	if string(body) != `{"ok":true}` {
+		t.Errorf("body = %s, want the second model's response", body)
+	}
+}
+
+// The same 403 on a provider whose models genuinely share one credential must
+// still short-circuit — the exemption is Model Studio-specific.
+func TestExecuteWithFallback_OtherProvider403StillBlocks(t *testing.T) {
+	logger := slog.Default()
+	handler := NewFallbackHandler(logger, 3, 30*time.Second)
+
+	models := []config.ModelConfig{
+		{Provider: config.ProviderOpenRouter, ModelID: "model-a"},
+		{Provider: config.ProviderOpenRouter, ModelID: "model-b"},
+	}
+
+	denied := &client.APIError{StatusCode: 403, Body: `{"error":{"message":"Access denied"}}`}
+
+	callCount := 0
+	_, _, err := handler.ExecuteWithFallback(context.Background(), models,
+		func(ctx context.Context, model config.ModelConfig) ([]byte, error) {
+			callCount++
+			return nil, denied
+		},
+	)
+
+	if callCount != 1 {
+		t.Errorf("executor called %d times, want 1 (provider blocked on 403)", callCount)
+	}
+	if err == nil {
+		t.Fatal("expected error for auth failure")
+	}
+	if !IsAuthError(err) {
+		t.Errorf("expected auth error, got: %v", err)
+	}
+}
+
 func TestExecuteWithFallback_AuthErrorWithMultipleProviders(t *testing.T) {
 	logger := slog.Default()
 	handler := NewFallbackHandler(logger, 3, 30*time.Second)

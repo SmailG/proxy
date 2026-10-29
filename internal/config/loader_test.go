@@ -1267,3 +1267,302 @@ func TestDefaults_StreamingTimeoutFallback(t *testing.T) {
 		t.Errorf("OpenCodeZen.StreamTimeoutMs = %d, want 700000 (should fallback to StreamingTimeoutMs)", cfg.OpenCodeZen.StreamTimeoutMs)
 	}
 }
+
+// clearAmbientProviderEnv pins every credential and URL variable these tests
+// could otherwise inherit from the developer's shell. The launch wrapper exports
+// ROUTATIC_PROXY_API_KEY and OC_GO_CC_API_KEY, and env beats the config file, so
+// without this a real key silently overrides the fixture and the assertions
+// depend on the machine they happen to run on.
+func clearAmbientProviderEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"ROUTATIC_PROXY_API_KEY",
+		"ROUTATIC_PROXY_API_KEYS",
+		"OC_GO_CC_API_KEY",
+		"OC_GO_CC_API_KEYS",
+		"ROUTATIC_PROXY_MODEL_STUDIO_API_KEY",
+		"ROUTATIC_PROXY_MODEL_STUDIO_API_KEYS",
+		"ROUTATIC_PROXY_MODEL_STUDIO_URL",
+		"ROUTATIC_PROXY_MODEL_STUDIO_ANTHROPIC_URL",
+		"ROUTATIC_PROXY_OPENROUTER_API_KEY",
+		"ROUTATIC_PROXY_OPENROUTER_API_KEYS",
+	} {
+		t.Setenv(name, "")
+	}
+}
+
+func TestEnvOverrides_ModelStudioSpecificKeys(t *testing.T) {
+	clearAmbientProviderEnv(t)
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+
+	cfgJSON := `{
+		"api_key": "global-key",
+		"model_studio": {
+			"base_url": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
+		}
+	}`
+	if err := os.WriteFile(cfgPath, []byte(cfgJSON), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	_ = os.Setenv("ROUTATIC_PROXY_CONFIG", cfgPath)
+	_ = os.Setenv("ROUTATIC_PROXY_MODEL_STUDIO_API_KEY", "model-studio-env-key")
+	defer func() {
+		_ = os.Unsetenv("ROUTATIC_PROXY_CONFIG")
+		_ = os.Unsetenv("ROUTATIC_PROXY_MODEL_STUDIO_API_KEY")
+	}()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.ModelStudio.APIKey != "model-studio-env-key" {
+		t.Errorf("ModelStudio.APIKey = %q, want %q", cfg.ModelStudio.APIKey, "model-studio-env-key")
+	}
+	if cfg.ModelStudio.APIKeys != nil {
+		t.Errorf("ModelStudio.APIKeys = %v, want nil", cfg.ModelStudio.APIKeys)
+	}
+	// The provider-specific key must not leak into the global key.
+	if cfg.APIKey != "global-key" {
+		t.Errorf("APIKey = %q, want %q", cfg.APIKey, "global-key")
+	}
+}
+
+func TestEnvOverrides_ModelStudioCommaSeparatedKeysPrecedence(t *testing.T) {
+	clearAmbientProviderEnv(t)
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+
+	cfgJSON := `{"api_key": "global-key"}`
+	if err := os.WriteFile(cfgPath, []byte(cfgJSON), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	_ = os.Setenv("ROUTATIC_PROXY_CONFIG", cfgPath)
+	_ = os.Setenv("ROUTATIC_PROXY_MODEL_STUDIO_API_KEY", "single-key")
+	_ = os.Setenv("ROUTATIC_PROXY_MODEL_STUDIO_API_KEYS", "ms-key-1,ms-key-2")
+	defer func() {
+		_ = os.Unsetenv("ROUTATIC_PROXY_CONFIG")
+		_ = os.Unsetenv("ROUTATIC_PROXY_MODEL_STUDIO_API_KEY")
+		_ = os.Unsetenv("ROUTATIC_PROXY_MODEL_STUDIO_API_KEYS")
+	}()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	want := []string{"ms-key-1", "ms-key-2"}
+	if len(cfg.ModelStudio.APIKeys) != len(want) {
+		t.Fatalf("ModelStudio.APIKeys = %v, want %v", cfg.ModelStudio.APIKeys, want)
+	}
+	for i := range want {
+		if cfg.ModelStudio.APIKeys[i] != want[i] {
+			t.Errorf("ModelStudio.APIKeys[%d] = %q, want %q", i, cfg.ModelStudio.APIKeys[i], want[i])
+		}
+	}
+	if cfg.ModelStudio.APIKey != "" {
+		t.Errorf("ModelStudio.APIKey = %q, want empty (API_KEYS wins)", cfg.ModelStudio.APIKey)
+	}
+}
+
+func TestEnvOverrides_ModelStudioBaseURL(t *testing.T) {
+	clearAmbientProviderEnv(t)
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+
+	cfgJSON := `{"api_key": "global-key"}`
+	if err := os.WriteFile(cfgPath, []byte(cfgJSON), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	want := "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
+	_ = os.Setenv("ROUTATIC_PROXY_CONFIG", cfgPath)
+	_ = os.Setenv("ROUTATIC_PROXY_MODEL_STUDIO_URL", want)
+	defer func() {
+		_ = os.Unsetenv("ROUTATIC_PROXY_CONFIG")
+		_ = os.Unsetenv("ROUTATIC_PROXY_MODEL_STUDIO_URL")
+	}()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.ModelStudio.BaseURL != want {
+		t.Errorf("ModelStudio.BaseURL = %q, want %q", cfg.ModelStudio.BaseURL, want)
+	}
+}
+
+// Overriding only base_url does not move traffic when anthropic_base_url is set,
+// because WireFormat prefers the Anthropic endpoint — so the gateway switch needs
+// its own variable.
+func TestEnvOverrides_ModelStudioAnthropicBaseURL(t *testing.T) {
+	clearAmbientProviderEnv(t)
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+
+	cfgJSON := `{"api_key": "global-key"}`
+	if err := os.WriteFile(cfgPath, []byte(cfgJSON), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	want := "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic"
+	_ = os.Setenv("ROUTATIC_PROXY_CONFIG", cfgPath)
+	_ = os.Setenv("ROUTATIC_PROXY_MODEL_STUDIO_ANTHROPIC_URL", want)
+	defer func() {
+		_ = os.Unsetenv("ROUTATIC_PROXY_CONFIG")
+		_ = os.Unsetenv("ROUTATIC_PROXY_MODEL_STUDIO_ANTHROPIC_URL")
+	}()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.ModelStudio.AnthropicBaseURL != want {
+		t.Errorf("ModelStudio.AnthropicBaseURL = %q, want %q", cfg.ModelStudio.AnthropicBaseURL, want)
+	}
+}
+
+// The Anthropic URL must NOT gain a default: a non-empty value is what makes
+// WireFormat prefer the Anthropic path, so defaulting it would silently switch
+// every Model Studio model onto an endpoint its config never asked for.
+func TestDefaults_ModelStudioAnthropicBaseURLStaysEmpty(t *testing.T) {
+	clearAmbientProviderEnv(t)
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+
+	if err := os.WriteFile(cfgPath, []byte(`{"api_key": "test-key"}`), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	_ = os.Setenv("ROUTATIC_PROXY_CONFIG", cfgPath)
+	defer func() { _ = os.Unsetenv("ROUTATIC_PROXY_CONFIG") }()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.ModelStudio.AnthropicBaseURL != "" {
+		t.Errorf("ModelStudio.AnthropicBaseURL = %q, want empty by default", cfg.ModelStudio.AnthropicBaseURL)
+	}
+}
+
+// getEndpoint posts to OpenRouter's BaseURL verbatim, so a default without the
+// /chat/completions suffix 404s. This is the regression the Fixed entry names.
+func TestDefaults_OpenRouterBaseURLIsFullChatCompletionsURL(t *testing.T) {
+	clearAmbientProviderEnv(t)
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+
+	if err := os.WriteFile(cfgPath, []byte(`{"api_key": "test-key"}`), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	_ = os.Setenv("ROUTATIC_PROXY_CONFIG", cfgPath)
+	defer func() { _ = os.Unsetenv("ROUTATIC_PROXY_CONFIG") }()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if !strings.HasSuffix(cfg.OpenRouter.BaseURL, "/chat/completions") {
+		t.Errorf("OpenRouter.BaseURL = %q, want a full /chat/completions URL", cfg.OpenRouter.BaseURL)
+	}
+	if !strings.HasSuffix(cfg.ModelStudio.BaseURL, "/chat/completions") {
+		t.Errorf("ModelStudio.BaseURL = %q, want a full /chat/completions URL", cfg.ModelStudio.BaseURL)
+	}
+}
+
+func TestDefaults_ModelStudio(t *testing.T) {
+	clearAmbientProviderEnv(t)
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+
+	// streaming_timeout_ms is deprecated; StreamTimeoutMs must pick it up.
+	cfgJSON := `{
+		"api_key": "test-key",
+		"model_studio": {
+			"timeout_ms": 300000,
+			"streaming_timeout_ms": 600000
+		}
+	}`
+	if err := os.WriteFile(cfgPath, []byte(cfgJSON), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	_ = os.Setenv("ROUTATIC_PROXY_CONFIG", cfgPath)
+	defer func() { _ = os.Unsetenv("ROUTATIC_PROXY_CONFIG") }()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.ModelStudio.BaseURL != defaultModelStudioBaseURL {
+		t.Errorf("ModelStudio.BaseURL = %q, want default %q", cfg.ModelStudio.BaseURL, defaultModelStudioBaseURL)
+	}
+	if cfg.ModelStudio.TimeoutMs != 300000 {
+		t.Errorf("ModelStudio.TimeoutMs = %d, want 300000", cfg.ModelStudio.TimeoutMs)
+	}
+	if cfg.ModelStudio.StreamTimeoutMs != 600000 {
+		t.Errorf("ModelStudio.StreamTimeoutMs = %d, want 600000 (should fall back to StreamingTimeoutMs)", cfg.ModelStudio.StreamTimeoutMs)
+	}
+}
+
+func TestModelStudioConfig_EffectiveAPIKeys(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  ModelStudioConfig
+		want []string
+	}{
+		{"api_keys wins", ModelStudioConfig{APIKey: "single", APIKeys: []string{"a", "b"}}, []string{"a", "b"}},
+		{"falls back to api_key", ModelStudioConfig{APIKey: "single"}, []string{"single"}},
+		{"empty returns nil", ModelStudioConfig{}, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.cfg.EffectiveAPIKeys()
+			if len(got) != len(tt.want) {
+				t.Fatalf("EffectiveAPIKeys() = %v, want %v", got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Errorf("EffectiveAPIKeys()[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+// A model_studio model entry must pass provider validation, including the
+// underscore spelling that NormalizeProvider folds to "model-studio".
+func TestValidateModelOverrides_ModelStudioProvider(t *testing.T) {
+	for _, spelling := range []string{"model-studio", "model_studio"} {
+		t.Run(spelling, func(t *testing.T) {
+			clearAmbientProviderEnv(t)
+			dir := t.TempDir()
+			cfgPath := filepath.Join(dir, "config.json")
+
+			cfgJSON := `{
+				"api_key": "global-key",
+				"model_overrides": {
+					"qwen3.8-max": {"provider": "` + spelling + `", "model_id": "qwen3.8-max"}
+				}
+			}`
+			if err := os.WriteFile(cfgPath, []byte(cfgJSON), 0644); err != nil {
+				t.Fatalf("failed to write test config: %v", err)
+			}
+
+			_ = os.Setenv("ROUTATIC_PROXY_CONFIG", cfgPath)
+			defer func() { _ = os.Unsetenv("ROUTATIC_PROXY_CONFIG") }()
+
+			if _, err := Load(); err != nil {
+				t.Fatalf("Load() unexpected error = %v", err)
+			}
+		})
+	}
+}

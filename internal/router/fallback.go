@@ -294,7 +294,10 @@ func (h *FallbackHandler) ExecuteWithFallback(
 		// If the provider has a single API key, block it so its remaining
 		// models are skipped. If it has multiple keys, don't block the
 		// round-robin — the next attempt will use a different key.
-		if IsAuthError(err) {
+		// A per-model entitlement 403 is excluded: the credential is fine and
+		// the rest of the chain is still worth trying, so it falls through to
+		// the ordinary non-retryable handling below.
+		if IsAuthError(err) && !IsModelEntitlementError(err, provider) {
 			keyCount := client.ProviderKeyCount(h.atomicCfg, provider)
 			if keyCount <= 1 {
 				h.logger.Warn("authentication error, blocking provider",
@@ -461,6 +464,9 @@ func IsUsageLimitError(err error) bool {
 // Auth errors are non-retryable and indicate invalid or expired credentials.
 // Since all models from the same provider share the same API key, fallback
 // attempts will fail identically, so we short-circuit the fallback chain.
+//
+// The 403 half of that assumption does not hold for every provider — see
+// IsModelEntitlementError, which callers must exclude before blocking.
 func IsAuthError(err error) bool {
 	if err == nil {
 		return false
@@ -469,6 +475,22 @@ func IsAuthError(err error) bool {
 	var apiErr *client.APIError
 	if errors.As(err, &apiErr) {
 		return apiErr.StatusCode == 401 || apiErr.StatusCode == 403
+	}
+	return false
+}
+
+// IsModelEntitlementError reports a 403 that denies one model rather than the
+// credential. Model Studio answers `403 Access to model denied` for IDs outside
+// the key's Token Plan tier: the key is valid and the provider's other models
+// still work, so blocking the whole provider would defeat the fallback chain
+// that exists to reach them.
+func IsModelEntitlementError(err error, provider string) bool {
+	if provider != config.ProviderModelStudio {
+		return false
+	}
+	var apiErr *client.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == 403
 	}
 	return false
 }

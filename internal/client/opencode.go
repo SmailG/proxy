@@ -55,6 +55,7 @@ const (
 	ProviderOpenCodeZen = config.ProviderOpenCodeZen
 	ProviderAWSBedrock  = config.ProviderAWSBedrock
 	ProviderOpenRouter  = config.ProviderOpenRouter
+	ProviderModelStudio = config.ProviderModelStudio
 )
 
 const (
@@ -98,6 +99,13 @@ func (c *OpenCodeClient) nextAPIKey(keys []string) string {
 
 // getProviderAPIKeys returns the API keys for a specific provider.
 // It checks provider-specific keys first, then falls back to global keys for backward compatibility.
+//
+// Only providers that can actually reach this legacy client are listed. Model
+// Studio is deliberately absent: it is always registered in the provider
+// registry, so the handlers take the provider path and never call getEndpoint
+// or SendAnthropicRequest for it. Adding a key case here without the matching
+// URL cases would only look like support. ProviderKeyCount below does handle
+// it, because the fallback chain calls that on every provider.
 func (c *OpenCodeClient) getProviderAPIKeys(modelConfig config.ModelConfig) []string {
 	cfg := c.atomic.Get()
 
@@ -143,6 +151,8 @@ func ProviderKeyCount(atomicCfg *config.AtomicConfig, provider string) int {
 		keys = cfg.AWSBedrock.EffectiveAPIKeys()
 	case ProviderOpenRouter:
 		keys = cfg.OpenRouter.EffectiveAPIKeys()
+	case ProviderModelStudio:
+		keys = cfg.ModelStudio.EffectiveAPIKeys()
 	default:
 		// Unknown provider - default to global keys
 		keys = cfg.EffectiveAPIKeys()
@@ -207,6 +217,11 @@ func (c *OpenCodeClient) StreamIdleTimeout(modelConfig config.ModelConfig) time.
 		if ms <= 0 {
 			ms = cfg.OpenRouter.TimeoutMs
 		}
+	case IsModelStudio(modelConfig):
+		ms = cfg.ModelStudio.StreamTimeoutMs
+		if ms <= 0 {
+			ms = cfg.ModelStudio.TimeoutMs
+		}
 	default:
 		ms = cfg.OpenCodeGo.StreamTimeoutMs
 		if ms <= 0 {
@@ -233,6 +248,8 @@ func (c *OpenCodeClient) RequestTimeout(model config.ModelConfig) time.Duration 
 		timeoutMs = cfg.OpenCodeZen.TimeoutMs
 	case IsOpenRouter(model):
 		timeoutMs = cfg.OpenRouter.TimeoutMs
+	case IsModelStudio(model):
+		timeoutMs = cfg.ModelStudio.TimeoutMs
 	default:
 		timeoutMs = cfg.OpenCodeGo.TimeoutMs
 	}
@@ -264,6 +281,11 @@ func (c *OpenCodeClient) StreamingTimeout(model config.ModelConfig) time.Duratio
 		timeoutMs = cfg.OpenRouter.StreamingTimeoutMs
 		if timeoutMs <= 0 {
 			timeoutMs = cfg.OpenRouter.TimeoutMs
+		}
+	case IsModelStudio(model):
+		timeoutMs = cfg.ModelStudio.StreamingTimeoutMs
+		if timeoutMs <= 0 {
+			timeoutMs = cfg.ModelStudio.TimeoutMs
 		}
 	default:
 		timeoutMs = cfg.OpenCodeGo.StreamingTimeoutMs
@@ -342,6 +364,12 @@ func IsBedrock(model config.ModelConfig) bool {
 // IsOpenRouter returns true if the model uses the OpenRouter provider.
 func IsOpenRouter(model config.ModelConfig) bool {
 	return Provider(model) == ProviderOpenRouter
+}
+
+// IsModelStudio returns true if the model uses the Alibaba Cloud Model Studio
+// provider (Bailian / DashScope, including the Token Plan gateway).
+func IsModelStudio(model config.ModelConfig) bool {
+	return Provider(model) == ProviderModelStudio
 }
 
 func setOpenRouterHeaders(req *http.Request) {

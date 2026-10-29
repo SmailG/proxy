@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Dashboard config export no longer redacts `jev_routing.api_key_env` (a variable name, not a secret), and config import validates `jev_routing` before it replaces the file on disk
 
 ### Fixed
+- The `openrouter` provider's default `base_url` was `https://openrouter.ai/api/v1`, but `getEndpoint` posts to that value verbatim — so an OpenRouter config that relied on the default 404'd. Now defaults to the full `/chat/completions` URL, matching the `init --provider openrouter` preset. Configs that pinned the old value explicitly still need editing by hand
+- `docs/openrouter.md` documented `ROUTATIC_PROXY_OPENROUTER_BASE_URL`, an override that was never implemented. Removed, with a note that the URL is config-file only
+- `configs/config.openrouter.json` set `provider: "openrouter"` on all 19 model entries but defined no `openrouter` block, so it silently fell back to the global key and the broken default URL above. A new test validates every shipped `configs/*.json` for exactly this: unknown provider names, missing `model_id`, and model entries whose provider block the file never defines
 - Accept `openrouter` and `aws-bedrock` in `model_overrides` and `model_family_overrides`, matching the providers `models` and `fallbacks` already allow (#134)
 - `routatic-proxy update` now fails before downloading, with an actionable message, when the install directory is not writable (e.g. root-owned `/usr/local/bin`)
 - `routatic-proxy update` stages the download in the install directory, fixing cross-filesystem rename failures when the temp dir is a separate mount

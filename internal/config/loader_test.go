@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1561,5 +1562,31 @@ func TestValidateModelOverrides_ModelStudioProvider(t *testing.T) {
 				t.Fatalf("Load() unexpected error = %v", err)
 			}
 		})
+	}
+}
+
+func TestValidateExtraBody_RejectsReservedKeys(t *testing.T) {
+	for _, key := range []string{"model", "messages", "stream", "stream_options", "tools"} {
+		cfg := &Config{
+			APIKey: "test",
+			Models: map[string]ModelConfig{
+				"default": {ModelID: "m", ExtraBody: map[string]json.RawMessage{key: json.RawMessage(`false`)}},
+			},
+		}
+		if err := validate(cfg); err == nil {
+			t.Errorf("extra_body key %q: expected validation error, got nil", key)
+		}
+	}
+}
+
+func TestValidateExtraBody_AllowsVendorKeys(t *testing.T) {
+	cfg := &Config{
+		APIKey: "test",
+		Models: map[string]ModelConfig{
+			"default": {ModelID: "m", ExtraBody: map[string]json.RawMessage{"enable_thinking": json.RawMessage(`false`)}},
+		},
+	}
+	if err := validate(cfg); err != nil {
+		t.Errorf("validate() error = %v, want nil for a vendor key", err)
 	}
 }

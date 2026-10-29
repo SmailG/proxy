@@ -483,3 +483,20 @@ func keysOf(m map[string]json.RawMessage) []string {
 	}
 	return out
 }
+
+func TestApplyModelStudioOverrides_SkippedWhenThinkingEnabled(t *testing.T) {
+	temp := 1.0
+	req := &types.MessageRequest{
+		MaxTokens:   32000,
+		Temperature: &temp,
+		Thinking:    json.RawMessage(`{"type":"enabled","budget_tokens":31999}`),
+	}
+	applyModelStudioOverrides(req, config.ModelConfig{Temperature: 0.7, MaxTokens: 8192})
+
+	if req.MaxTokens != 32000 {
+		t.Errorf("MaxTokens = %d, want the client's 32000 (config would drop it below the thinking budget)", req.MaxTokens)
+	}
+	if req.Temperature == nil || *req.Temperature != 1.0 {
+		t.Errorf("Temperature = %v, want the client's 1.0", req.Temperature)
+	}
+}

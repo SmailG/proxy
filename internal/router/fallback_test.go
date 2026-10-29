@@ -1144,3 +1144,51 @@ func TestExecuteWithFallback_PlainRateLimitDoesNotForceOpen(t *testing.T) {
 		t.Errorf("model-a circuit = %v; a transient 429 must not open it on one failure", got)
 	}
 }
+
+// A 403 whose body is not the per-model refusal (expired key, unpaid account)
+// is a credential failure and must still block the provider.
+func TestExecuteWithFallback_ModelStudioCredential403StillBlocks(t *testing.T) {
+	handler := NewFallbackHandler(slog.Default(), 3, 30*time.Second)
+	models := []config.ModelConfig{
+		{Provider: config.ProviderModelStudio, ModelID: "a"},
+		{Provider: config.ProviderModelStudio, ModelID: "b"},
+	}
+	forbidden := &client.APIError{StatusCode: 403, Body: `{"error":{"message":"Account in arrears"}}`}
+
+	var tried int
+	_, _, err := handler.ExecuteWithFallback(context.Background(), models,
+		func(ctx context.Context, model config.ModelConfig) ([]byte, error) {
+			tried++
+			return nil, forbidden
+		},
+	)
+	if !IsAuthError(err) {
+		t.Fatalf("err = %v, want an auth error", err)
+	}
+	if tried != 1 {
+		t.Errorf("tried %d models, want 1 (provider should be blocked)", tried)
+	}
+}
+
+// 403 on one model then 500 on the next is not an auth problem.
+func TestExecuteWithFallback_ModelStudioMixedFailuresNotAuth(t *testing.T) {
+	handler := NewFallbackHandler(slog.Default(), 3, 30*time.Second)
+	models := []config.ModelConfig{
+		{Provider: config.ProviderModelStudio, ModelID: "a"},
+		{Provider: config.ProviderModelStudio, ModelID: "b"},
+	}
+	denied := &client.APIError{StatusCode: 403, Body: `{"error":{"message":"Access to model denied"}}`}
+	boom := &client.APIError{StatusCode: 500, Body: "boom"}
+
+	_, _, err := handler.ExecuteWithFallback(context.Background(), models,
+		func(ctx context.Context, model config.ModelConfig) ([]byte, error) {
+			if model.ModelID == "a" {
+				return nil, denied
+			}
+			return nil, boom
+		},
+	)
+	if err == nil || IsAuthError(err) {
+		t.Fatalf("err = %v, want a non-auth failure", err)
+	}
+}

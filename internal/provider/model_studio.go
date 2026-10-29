@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/routatic/proxy/internal/client"
@@ -49,6 +50,10 @@ const (
 // are ignored rather than routed to a URL shape that does not exist.
 type ModelStudioProvider struct {
 	baseProvider
+
+	// extraBodyWarned holds model IDs already warned about, so the dropped
+	// extra_body is logged once per model rather than on every request.
+	extraBodyWarned sync.Map
 }
 
 // NewModelStudioProvider creates a new ModelStudioProvider.
@@ -157,9 +162,12 @@ func (p *ModelStudioProvider) Stream(ctx context.Context, req *core.NormalizedRe
 
 // warnExtraBodyIgnored logs when a model's extra_body cannot be applied, since
 // NormalizedToAnthropic has no place to put it and the setting would otherwise
-// vanish without any signal.
-func warnExtraBodyIgnored(model config.ModelConfig) {
-	if len(model.ExtraBody) > 0 {
+// vanish without any signal. Logged once per model.
+func (p *ModelStudioProvider) warnExtraBodyIgnored(model config.ModelConfig) {
+	if len(model.ExtraBody) == 0 {
+		return
+	}
+	if _, seen := p.extraBodyWarned.LoadOrStore(model.ModelID, struct{}{}); !seen {
 		slog.Warn("extra_body is ignored on the Anthropic wire format; set wire_format to \"openai\" to apply it",
 			"model", model.ModelID)
 	}
@@ -174,7 +182,7 @@ func (p *ModelStudioProvider) executeAnthropic(ctx context.Context, req *core.No
 
 	anthropicReq := transformer.NormalizedToAnthropic(req, model)
 	applyModelStudioOverrides(anthropicReq, model)
-	warnExtraBodyIgnored(model)
+	p.warnExtraBodyIgnored(model)
 	start := time.Now()
 	resp, err := p.doRequest(ctx, endpoint, p.apiKey(cfg), anthropicReq, false, core.WireFormatAnthropic)
 	if err != nil {
@@ -204,7 +212,7 @@ func (p *ModelStudioProvider) streamAnthropic(ctx context.Context, req *core.Nor
 
 	anthropicReq := transformer.NormalizedToAnthropic(req, model)
 	applyModelStudioOverrides(anthropicReq, model)
-	warnExtraBodyIgnored(model)
+	p.warnExtraBodyIgnored(model)
 	resp, err := p.doRequest(ctx, endpoint, p.apiKey(cfg), anthropicReq, true, core.WireFormatAnthropic)
 	if err != nil {
 		return nil, err
@@ -308,7 +316,14 @@ func withSuffix(raw, suffix, field string) (string, error) {
 // temperature and max_tokens a config declares would be silently ignored on the
 // path that is the default whenever anthropic_base_url is set — the two wire
 // formats would disagree about the same config.
+//
+// When the client enabled extended thinking the overrides are skipped: Anthropic
+// validates max_tokens against the thinking budget and requires temperature 1,
+// so a config value could turn a valid request into a 400.
 func applyModelStudioOverrides(req *types.MessageRequest, model config.ModelConfig) {
+	if len(req.Thinking) > 0 {
+		return
+	}
 	if model.Temperature > 0 {
 		temp := model.Temperature
 		req.Temperature = &temp

@@ -22,10 +22,12 @@ survive intact instead of making a lossy round trip through the OpenAI format.
 The passthrough is asymmetric, and worth being precise about:
 
 - The **response** is forwarded byte-for-byte.
-- The **request** is rebuilt from the proxy's internal normalized form, which has no `top_p` or
-  `metadata` field — so a client's `top_p` and `metadata` are **dropped** on this path. The model
-  config's `temperature` and `max_tokens` are re-applied by `applyModelStudioOverrides`, so those
-  behave the same as on the Chat Completions path.
+- The **request** is rebuilt from the proxy's internal normalized form, which has no `metadata`
+  field — so a client's `metadata` is **dropped** on this path (`top_p` is carried through). The
+  model config's `temperature` and `max_tokens` are re-applied by `applyModelStudioOverrides`, so
+  those behave the same as on the Chat Completions path — except when the client enabled extended
+  thinking, where the client's values stand because Anthropic validates them against the thinking
+  budget.
 
 ## Quick start
 
@@ -285,9 +287,12 @@ curl -sS -o /dev/null -w '%{http_code}\n' \
 > free-inference token bucket under console credentials, not Token Plan tier entitlement — a model
 > can show a full free bucket and still 403 on the Token Plan gateway.
 
-A 403 like this is treated as a **per-model** failure, not a credential failure: the fallback chain
-continues to the next model instead of blocking the whole provider (`IsModelEntitlementError` in
-`internal/router/fallback.go`). That is why mixing in-tier and out-of-tier IDs in one chain is safe.
+A 403 whose body says `Access to model denied` is treated as a **per-model** failure, not a
+credential failure: the fallback chain continues to the next model instead of blocking the whole
+provider (`IsModelEntitlementError` in `internal/router/fallback.go`). Any other 403 (expired key,
+account in arrears) still blocks the provider. If every model in a chain is denied, the 403 is
+returned to the caller; a chain that mixes 403s with other failures is reported as a generic failure.
+That is why mixing in-tier and out-of-tier IDs in one chain is safe.
 
 Token Plan's own role mapping, for reference:
 

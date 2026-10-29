@@ -427,6 +427,50 @@ func validate(cfg *Config) error {
 		return err
 	}
 
+	if err := validateExtraBody(cfg); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// reservedExtraBodyKeys are request fields the proxy owns. extra_body is merged
+// last, so overriding one would desync the body from how the proxy handles the
+// reply (e.g. stream:false while the response is parsed as SSE).
+var reservedExtraBodyKeys = []string{"model", "messages", "stream", "stream_options", "tools"}
+
+// validateExtraBody rejects extra_body entries that collide with a reserved key.
+func validateExtraBody(cfg *Config) error {
+	check := func(label string, mc ModelConfig) error {
+		for _, k := range reservedExtraBodyKeys {
+			if _, ok := mc.ExtraBody[k]; ok {
+				return fmt.Errorf("%s: extra_body may not set %q (managed by the proxy)", label, k)
+			}
+		}
+		return nil
+	}
+	for key, mc := range cfg.Models {
+		if err := check(fmt.Sprintf("models[%q]", key), mc); err != nil {
+			return err
+		}
+	}
+	for key, mc := range cfg.ModelOverrides {
+		if err := check(fmt.Sprintf("model_overrides[%q]", key), mc); err != nil {
+			return err
+		}
+	}
+	for key, mc := range cfg.ModelFamilyOverrides {
+		if err := check(fmt.Sprintf("model_family_overrides[%q]", key), mc); err != nil {
+			return err
+		}
+	}
+	for scenario, list := range cfg.Fallbacks {
+		for i, mc := range list {
+			if err := check(fmt.Sprintf("fallbacks[%q][%d]", scenario, i), mc); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 

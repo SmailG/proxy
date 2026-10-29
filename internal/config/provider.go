@@ -49,7 +49,7 @@ func IsKnownProvider(provider string) bool {
 }
 
 // quotedKnownProviders renders the known provider names for error messages,
-// e.g. `"opencode-go", "opencode-zen", "aws-bedrock" or "openrouter"`.
+// e.g. `"opencode-go", "opencode-zen", "aws-bedrock", "openrouter" or "model-studio"`.
 func quotedKnownProviders() string {
 	quoted := make([]string, len(KnownProviders))
 	for i, p := range KnownProviders {

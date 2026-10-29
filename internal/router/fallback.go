@@ -221,6 +221,9 @@ func (h *FallbackHandler) ExecuteWithFallback(
 	var usageLimitErr error
 	var authErr error
 	var entitlementErr error
+	// otherFailure records any failure that is not an entitlement 403, so a
+	// mixed chain (403 then 500) is not reported as an auth problem.
+	otherFailure := false
 	authAttempted := 0
 
 	for i, model := range models {
@@ -323,6 +326,10 @@ func (h *FallbackHandler) ExecuteWithFallback(
 			)
 		}
 
+		if !IsModelEntitlementError(err, provider) {
+			otherFailure = true
+		}
+
 		switch {
 		case IsInsufficientQuotaError(err):
 			// Quota exhaustion needs operational intervention, so the circuit
@@ -371,7 +378,7 @@ func (h *FallbackHandler) ExecuteWithFallback(
 		}, nil, usageLimitErr
 	}
 
-	if entitlementErr != nil {
+	if entitlementErr != nil && !otherFailure {
 		return &FallbackResult{
 			ModelID:     models[0].ModelID,
 			Success:     false,
@@ -497,14 +504,16 @@ func IsAuthError(err error) bool {
 // credential. Model Studio answers `403 Access to model denied` for IDs outside
 // the key's Token Plan tier: the key is valid and the provider's other models
 // still work, so blocking the whole provider would defeat the fallback chain
-// that exists to reach them.
+// that exists to reach them. Other 403s (expired key, unpaid account, IP
+// allow-list) share the status code but not the body, and still block.
 func IsModelEntitlementError(err error, provider string) bool {
 	if provider != config.ProviderModelStudio {
 		return false
 	}
 	var apiErr *client.APIError
 	if errors.As(err, &apiErr) {
-		return apiErr.StatusCode == 403
+		return apiErr.StatusCode == 403 &&
+			strings.Contains(strings.ToLower(apiErr.Body), "access to model denied")
 	}
 	return false
 }

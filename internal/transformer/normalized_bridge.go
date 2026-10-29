@@ -359,6 +359,7 @@ func normalizedToMessageRequest(req *core.NormalizedRequest) *types.MessageReque
 	if req.Temperature != nil {
 		anthropicReq.Temperature = req.Temperature
 	}
+	anthropicReq.TopP = req.TopP
 
 	// Set thinking.
 	if req.ReasoningEffort != "" || req.ThinkingBudget > 0 {

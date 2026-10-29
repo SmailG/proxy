@@ -724,6 +724,34 @@ func TestExecuteWithFallback_ModelStudioEntitlement403ContinuesChain(t *testing.
 	}
 }
 
+// When the key lacks access to every model, the caller must still see the 403
+// so IsAuthError holds, rather than a generic "all models failed".
+func TestExecuteWithFallback_ModelStudioAllDeniedReturns403(t *testing.T) {
+	handler := NewFallbackHandler(slog.Default(), 3, 30*time.Second)
+
+	models := []config.ModelConfig{
+		{Provider: config.ProviderModelStudio, ModelID: "kimi-k2.6"},
+		{Provider: config.ProviderModelStudio, ModelID: "qwen3.8-max"},
+	}
+	denied := &client.APIError{StatusCode: 403, Body: `{"error":{"message":"Access to model denied"}}`}
+
+	result, _, err := handler.ExecuteWithFallback(context.Background(), models,
+		func(ctx context.Context, model config.ModelConfig) ([]byte, error) {
+			return nil, denied
+		},
+	)
+
+	if !errors.Is(err, denied) {
+		t.Fatalf("err = %v, want the original 403", err)
+	}
+	if !IsAuthError(err) {
+		t.Error("IsAuthError(err) = false, want true")
+	}
+	if result == nil || result.Attempted != 2 {
+		t.Errorf("result = %+v, want both models attempted", result)
+	}
+}
+
 // The same 403 on a provider whose models genuinely share one credential must
 // still short-circuit — the exemption is Model Studio-specific.
 func TestExecuteWithFallback_OtherProvider403StillBlocks(t *testing.T) {

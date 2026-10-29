@@ -69,7 +69,10 @@ func NewServer(atomic *config.AtomicConfig, captureLogger *debug.CaptureLogger) 
 	fallbackHandler.SetAtomicConfig(atomic)
 
 	// Register providers.
-	providerRegistry := newProviderRegistry(atomic)
+	providerRegistry, err := newProviderRegistry(atomic)
+	if err != nil {
+		return nil, err
+	}
 
 	// Create status store for the statusline endpoint.
 	statusStore := status.NewStore(0)
@@ -194,13 +197,19 @@ func NewServer(atomic *config.AtomicConfig, captureLogger *debug.CaptureLogger) 
 //
 // OpenRouter is the one known provider deliberately absent: it has no core.Provider
 // implementation and is served by the legacy client on purpose.
-func newProviderRegistry(atomic *config.AtomicConfig) *core.ProviderRegistry {
+func newProviderRegistry(atomic *config.AtomicConfig) (*core.ProviderRegistry, error) {
 	registry := core.NewProviderRegistry()
-	_ = registry.Register(provider.NewOpenCodeGoProvider(atomic))
-	_ = registry.Register(provider.NewOpenCodeZenProvider(atomic))
-	_ = registry.Register(provider.NewAWSBedrockProvider(atomic))
-	_ = registry.Register(provider.NewModelStudioProvider(atomic))
-	return registry
+	for _, p := range []core.Provider{
+		provider.NewOpenCodeGoProvider(atomic),
+		provider.NewOpenCodeZenProvider(atomic),
+		provider.NewAWSBedrockProvider(atomic),
+		provider.NewModelStudioProvider(atomic),
+	} {
+		if err := registry.Register(p); err != nil {
+			return nil, fmt.Errorf("registering provider %q: %w", p.Name(), err)
+		}
+	}
+	return registry, nil
 }
 
 func configureTokenCache(counter *token.Counter, cfg *config.Config) {

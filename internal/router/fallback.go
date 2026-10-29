@@ -220,6 +220,7 @@ func (h *FallbackHandler) ExecuteWithFallback(
 	blockedProviders := make(map[string]bool)
 	var usageLimitErr error
 	var authErr error
+	var entitlementErr error
 	authAttempted := 0
 
 	for i, model := range models {
@@ -297,7 +298,11 @@ func (h *FallbackHandler) ExecuteWithFallback(
 		// A per-model entitlement 403 is excluded: the credential is fine and
 		// the rest of the chain is still worth trying, so it falls through to
 		// the ordinary non-retryable handling below.
-		if IsAuthError(err) && !IsModelEntitlementError(err, provider) {
+		if IsAuthError(err) && IsModelEntitlementError(err, provider) {
+			// Remembered so a chain denied everywhere still surfaces the 403
+			// to the caller instead of a generic "all models failed".
+			entitlementErr = err
+		} else if IsAuthError(err) {
 			keyCount := client.ProviderKeyCount(h.atomicCfg, provider)
 			if keyCount <= 1 {
 				h.logger.Warn("authentication error, blocking provider",
@@ -364,6 +369,15 @@ func (h *FallbackHandler) ExecuteWithFallback(
 			Attempted:   totalModels,
 			TotalModels: totalModels,
 		}, nil, usageLimitErr
+	}
+
+	if entitlementErr != nil {
+		return &FallbackResult{
+			ModelID:     models[0].ModelID,
+			Success:     false,
+			Attempted:   totalModels,
+			TotalModels: totalModels,
+		}, nil, entitlementErr
 	}
 
 	return &FallbackResult{

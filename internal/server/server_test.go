@@ -14,7 +14,10 @@ import (
 // endpoint. That failure looks like a working proxy routing to the wrong host,
 // so the registry set is asserted here rather than discovered at runtime.
 func TestNewProviderRegistry_RegistersModelStudio(t *testing.T) {
-	registry := newProviderRegistry(config.NewAtomicConfig(&config.Config{}, ""))
+	registry, err := newProviderRegistry(config.NewAtomicConfig(&config.Config{}, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	p, ok := registry.Get(config.ProviderModelStudio)
 	if !ok {
@@ -28,7 +31,10 @@ func TestNewProviderRegistry_RegistersModelStudio(t *testing.T) {
 // Every provider that has a core.Provider implementation must be registered.
 // OpenRouter is excluded on purpose: it is served by the legacy client.
 func TestNewProviderRegistry_CoversEveryImplementedProvider(t *testing.T) {
-	registry := newProviderRegistry(config.NewAtomicConfig(&config.Config{}, ""))
+	registry, err := newProviderRegistry(config.NewAtomicConfig(&config.Config{}, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
 	registered := registry.List()
 
 	want := []string{
@@ -51,9 +57,12 @@ func TestNewProviderRegistry_CoversEveryImplementedProvider(t *testing.T) {
 // The registry is what the handlers consult to choose the provider path, so
 // each registered provider must resolve to a distinct implementation.
 func TestNewProviderRegistry_WireFormatPerProvider(t *testing.T) {
-	registry := newProviderRegistry(config.NewAtomicConfig(&config.Config{
+	registry, err := newProviderRegistry(config.NewAtomicConfig(&config.Config{
 		ModelStudio: config.ModelStudioConfig{BaseURL: "https://example.invalid/v1"},
 	}, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	p, ok := registry.Get(config.ProviderModelStudio)
 	if !ok {

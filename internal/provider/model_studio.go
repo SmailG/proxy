@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -154,6 +155,16 @@ func (p *ModelStudioProvider) Stream(ctx context.Context, req *core.NormalizedRe
 
 // ── Anthropic Messages (native passthrough) ────────────────────────────
 
+// warnExtraBodyIgnored logs when a model's extra_body cannot be applied, since
+// NormalizedToAnthropic has no place to put it and the setting would otherwise
+// vanish without any signal.
+func warnExtraBodyIgnored(model config.ModelConfig) {
+	if len(model.ExtraBody) > 0 {
+		slog.Warn("extra_body is ignored on the Anthropic wire format; set wire_format to \"openai\" to apply it",
+			"model", model.ModelID)
+	}
+}
+
 func (p *ModelStudioProvider) executeAnthropic(ctx context.Context, req *core.NormalizedRequest, model config.ModelConfig) (*core.ExecuteResult, error) {
 	cfg := p.atomic.Get()
 	endpoint, err := p.anthropicEndpoint(cfg)
@@ -163,6 +174,7 @@ func (p *ModelStudioProvider) executeAnthropic(ctx context.Context, req *core.No
 
 	anthropicReq := transformer.NormalizedToAnthropic(req, model)
 	applyModelStudioOverrides(anthropicReq, model)
+	warnExtraBodyIgnored(model)
 	start := time.Now()
 	resp, err := p.doRequest(ctx, endpoint, p.apiKey(cfg), anthropicReq, false, core.WireFormatAnthropic)
 	if err != nil {
@@ -192,6 +204,7 @@ func (p *ModelStudioProvider) streamAnthropic(ctx context.Context, req *core.Nor
 
 	anthropicReq := transformer.NormalizedToAnthropic(req, model)
 	applyModelStudioOverrides(anthropicReq, model)
+	warnExtraBodyIgnored(model)
 	resp, err := p.doRequest(ctx, endpoint, p.apiKey(cfg), anthropicReq, true, core.WireFormatAnthropic)
 	if err != nil {
 		return nil, err

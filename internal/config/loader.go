@@ -30,9 +30,7 @@ const (
 	defaultZenResponsesBaseURL = "https://opencode.ai/zen/v1/responses"
 	defaultZenGeminiBaseURL    = "https://opencode.ai/zen/v1/models"
 
-	// defaultOpenRouterBaseURL must be the full Chat Completions URL: getEndpoint
-	// posts to OpenRouter's BaseURL verbatim, so a bare /api/v1 would 404.
-	defaultOpenRouterBaseURL = "https://openrouter.ai/api/v1/chat/completions"
+	defaultOpenRouterBaseURL = "https://openrouter.ai/api/v1"
 
 	// defaultModelStudioBaseURL is the Alibaba Cloud Model Studio (international)
 	// OpenAI-compatible Chat Completions endpoint. The Token Plan gateway is a

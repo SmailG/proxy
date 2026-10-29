@@ -371,7 +371,7 @@
   },
 
   "openrouter": {
-    "base_url": "https://openrouter.ai/api/v1/chat/completions",
+    "base_url": "https://openrouter.ai/api/v1",
     "api_key": "",
     "api_keys": [],
     "timeout_ms": 300000,

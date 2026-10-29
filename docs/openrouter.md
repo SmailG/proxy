@@ -77,10 +77,7 @@ Add the `openrouter` provider to your `~/.config/routatic-proxy/config.json`:
 |----------|-------------|------------|
 | `ROUTATIC_PROXY_OPENROUTER_API_KEY` | Single API key override | Highest |
 | `ROUTATIC_PROXY_OPENROUTER_API_KEYS` | Comma-separated keys for round-robin | Highest |
-
-There is **no** environment override for the OpenRouter URL. Set `openrouter.base_url` in the
-config file; it must be the full Chat Completions URL (`https://openrouter.ai/api/v1/chat/completions`),
-because `getEndpoint` posts to that value verbatim.
+| `ROUTATIC_PROXY_OPENROUTER_BASE_URL` | Custom base URL override | Highest |
 
 Environment variables take precedence over config file values. Config values support `${VAR}` interpolation.
 

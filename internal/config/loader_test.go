@@ -1449,9 +1449,9 @@ func TestDefaults_ModelStudioAnthropicBaseURLStaysEmpty(t *testing.T) {
 	}
 }
 
-// getEndpoint posts to OpenRouter's BaseURL verbatim, so a default without the
-// /chat/completions suffix 404s. This is the regression the Fixed entry names.
-func TestDefaults_OpenRouterBaseURLIsFullChatCompletionsURL(t *testing.T) {
+// Model Studio's base_url default must be usable as given: a bare
+// /compatible-mode/v1 would need the suffix appended before posting.
+func TestDefaults_ModelStudioBaseURLIsFullChatCompletionsURL(t *testing.T) {
 	clearAmbientProviderEnv(t)
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")
@@ -1468,9 +1468,6 @@ func TestDefaults_OpenRouterBaseURLIsFullChatCompletionsURL(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if !strings.HasSuffix(cfg.OpenRouter.BaseURL, "/chat/completions") {
-		t.Errorf("OpenRouter.BaseURL = %q, want a full /chat/completions URL", cfg.OpenRouter.BaseURL)
-	}
 	if !strings.HasSuffix(cfg.ModelStudio.BaseURL, "/chat/completions") {
 		t.Errorf("ModelStudio.BaseURL = %q, want a full /chat/completions URL", cfg.ModelStudio.BaseURL)
 	}

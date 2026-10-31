@@ -508,3 +508,27 @@ func TestApplyModelStudioOverrides_SkippedWhenThinkingEnabled(t *testing.T) {
 		t.Errorf("Temperature = %v, want the client's 1.0", req.Temperature)
 	}
 }
+
+func TestApplyModelStudioOverrides_AppliedWhenThinkingDisabled(t *testing.T) {
+	req := &types.MessageRequest{
+		MaxTokens: 32000,
+		Thinking:  json.RawMessage(`{"type":"disabled","budget_tokens":0}`),
+	}
+	applyModelStudioOverrides(req, config.ModelConfig{Temperature: 0.7, MaxTokens: 8192})
+
+	if req.MaxTokens != 8192 {
+		t.Errorf("MaxTokens = %d, want 8192 from the model config", req.MaxTokens)
+	}
+	if req.Temperature == nil || *req.Temperature != 0.7 {
+		t.Errorf("Temperature = %v, want 0.7 from the model config", req.Temperature)
+	}
+}
+
+func TestApplyModelStudioOverrides_SkippedWhenThinkingUnparseable(t *testing.T) {
+	req := &types.MessageRequest{MaxTokens: 32000, Thinking: json.RawMessage(`not json`)}
+	applyModelStudioOverrides(req, config.ModelConfig{Temperature: 0.7, MaxTokens: 8192})
+
+	if req.MaxTokens != 32000 {
+		t.Errorf("MaxTokens = %d, want the client's 32000", req.MaxTokens)
+	}
+}

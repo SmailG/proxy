@@ -33,6 +33,24 @@ func TestNormalizedToAnthropic_SystemPromptWithNewline(t *testing.T) {
 	}
 }
 
+func TestNormalizedToAnthropic_CarriesTopP(t *testing.T) {
+	topP := 0.9
+	req := &core.NormalizedRequest{
+		Model:     "qwen3.8-max",
+		MaxTokens: 100,
+		TopP:      &topP,
+		Messages: []core.NormalizedMessage{
+			{Role: "user", Blocks: []core.NormalizedContentBlock{{Type: "text", Text: "Hello"}}},
+		},
+	}
+
+	anthropicReq := NormalizedToAnthropic(req, config.ModelConfig{ModelID: "qwen3.8-max"})
+
+	if anthropicReq.TopP == nil || *anthropicReq.TopP != topP {
+		t.Fatalf("TopP = %v, want %v", anthropicReq.TopP, topP)
+	}
+}
+
 func TestNormalizedToAnthropic_MessageContentWithNewline(t *testing.T) {
 	req := &core.NormalizedRequest{
 		Model:     "minimax-m3",

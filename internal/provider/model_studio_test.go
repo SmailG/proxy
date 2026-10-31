@@ -220,8 +220,10 @@ func TestModelStudioProvider_Execute_AnthropicPassthrough(t *testing.T) {
 	}}
 	p := NewModelStudioProvider(config.NewAtomicConfig(cfg, ""))
 
+	topP := 0.85
 	req := &core.NormalizedRequest{
 		Model:    "qwen3.8-max",
+		TopP:     &topP,
 		Messages: []core.NormalizedMessage{{Role: "user", Blocks: []core.NormalizedContentBlock{{Type: "text", Text: "Hi"}}}},
 	}
 	model := config.ModelConfig{
@@ -278,6 +280,12 @@ func TestModelStudioProvider_Execute_AnthropicPassthrough(t *testing.T) {
 	}
 	if anthropicReq.MaxTokens != 4096 {
 		t.Errorf("max_tokens = %d, want 4096 from the model config", anthropicReq.MaxTokens)
+	}
+
+	// The client's top_p is not model config; it must survive the normalized
+	// round trip instead of silently reverting to the upstream default.
+	if anthropicReq.TopP == nil || *anthropicReq.TopP != topP {
+		t.Errorf("top_p = %v, want %v carried from the client request", anthropicReq.TopP, topP)
 	}
 }
 

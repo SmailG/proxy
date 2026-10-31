@@ -29,6 +29,7 @@ func TransformRequestFromNormalized(req *core.NormalizedRequest, model config.Mo
 			Messages:  []types.ChatMessage{{Role: "user", Content: types.TextContent(req.SystemPrompt + "\n" + joinMessageText(req.Messages))}},
 			Stream:    &stream,
 			MaxTokens: &maxTokens,
+			ExtraBody: model.ExtraBody,
 		}
 	}
 	return openaiReq
@@ -358,6 +359,7 @@ func normalizedToMessageRequest(req *core.NormalizedRequest) *types.MessageReque
 	if req.Temperature != nil {
 		anthropicReq.Temperature = req.Temperature
 	}
+	anthropicReq.TopP = req.TopP
 
 	// Set thinking.
 	if req.ReasoningEffort != "" || req.ThinkingBudget > 0 {

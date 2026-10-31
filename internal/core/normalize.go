@@ -31,6 +31,7 @@ func NormalizeRequest(anthropicReq *types.MessageRequest) *NormalizedRequest {
 	if anthropicReq.Temperature != nil {
 		nr.Temperature = anthropicReq.Temperature
 	}
+	nr.TopP = anthropicReq.TopP
 
 	// Extract reasoning effort and thinking budget.
 	if len(anthropicReq.Thinking) > 0 {

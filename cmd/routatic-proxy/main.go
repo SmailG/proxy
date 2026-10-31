@@ -507,6 +507,7 @@ The --provider flag pre-configures the config with provider-specific defaults:
   - opencode-zen: OpenCode Zen (pay-as-you-go, Claude/GPT/Gemini)
   - aws-bedrock: AWS Bedrock Mantle (run models on your AWS infrastructure)
   - openrouter: OpenRouter (unified API for 100+ models)
+  - model-studio: Alibaba Cloud Model Studio (Bailian/DashScope - Qwen, GLM, DeepSeek; also the Token Plan gateway)
 
 Without --provider, a default config optimized for OpenCode Go is created.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -565,7 +566,7 @@ Without --provider, a default config optimized for OpenCode Go is created.`,
 	}
 
 	cmd.Flags().StringVar(&provider, "provider", "",
-		"Provider preset: opencode-go, opencode-zen, aws-bedrock, openrouter")
+		"Provider preset: opencode-go, opencode-zen, aws-bedrock, openrouter, model-studio")
 
 	return cmd
 }

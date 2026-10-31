@@ -40,6 +40,32 @@ type ChatCompletionRequest struct {
 	ToolChoice      interface{}     `json:"tool_choice,omitempty"`
 	Stop            interface{}     `json:"stop,omitempty"`
 	StreamOptions   *StreamOptions  `json:"stream_options,omitempty"`
+	// ExtraBody carries vendor-specific top-level parameters that have no
+	// first-class field above, e.g. DashScope's `enable_thinking`. It is
+	// merged into the request object at marshal time.
+	ExtraBody map[string]json.RawMessage `json:"-"`
+}
+
+// MarshalJSON emits the declared fields and then merges ExtraBody into the same
+// JSON object, so vendor parameters land at the top level where providers such
+// as DashScope require them. ExtraBody wins on key collision.
+func (r ChatCompletionRequest) MarshalJSON() ([]byte, error) {
+	type chatCompletionRequest ChatCompletionRequest
+	base, err := json.Marshal(chatCompletionRequest(r))
+	if err != nil {
+		return nil, err
+	}
+	if len(r.ExtraBody) == 0 {
+		return base, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(base, &fields); err != nil {
+		return nil, err
+	}
+	for k, v := range r.ExtraBody {
+		fields[k] = v
+	}
+	return json.Marshal(fields)
 }
 
 // StreamOptions controls streaming response metadata from OpenAI-compatible APIs.

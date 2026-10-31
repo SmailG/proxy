@@ -26,6 +26,7 @@ type Config struct {
 	OpenCodeGo                     OpenCodeGoConfig         `json:"opencode_go"`
 	OpenCodeZen                    OpenCodeZenConfig        `json:"opencode_zen"`
 	OpenRouter                     OpenRouterConfig         `json:"openrouter"`
+	ModelStudio                    ModelStudioConfig        `json:"model_studio"`
 	AnthropicFirst                 AnthropicFirstConfig     `json:"anthropic_first"`
 	JevRouting                     JevRoutingConfig         `json:"jev_routing"`
 	Logging                        LoggingConfig            `json:"logging"`
@@ -92,21 +93,22 @@ type DebugConfig struct {
 // while opencode-zen and aws-bedrock classify by model ID and ignore the
 // override. Unrecognised values fall back to the provider's classification.
 type ModelConfig struct {
-	Provider               string          `json:"provider"`
-	ModelID                string          `json:"model_id"`
-	ModelRef               string          `json:"model_ref,omitempty"`
-	WireFormat             string          `json:"wire_format,omitempty"` // "auto" (default), "openai", "anthropic", "responses", "gemini"
-	Temperature            float64         `json:"temperature"`
-	MaxTokens              int             `json:"max_tokens"`
-	MaxOutputTokens        int             `json:"max_output_tokens,omitempty"`
-	ContextWindow          int             `json:"context_window,omitempty"`
-	ContextMargin          int             `json:"context_margin,omitempty"`
-	ContextThreshold       int             `json:"context_threshold"`
-	SupportsTools          *bool           `json:"supports_tools,omitempty"`
-	ReasoningEffort        string          `json:"reasoning_effort"`
-	Thinking               json.RawMessage `json:"thinking,omitempty"`
-	Vision                 bool            `json:"vision"`
-	AnthropicToolsDisabled bool            `json:"anthropic_tools_disabled"`
+	Provider               string                     `json:"provider"`
+	ModelID                string                     `json:"model_id"`
+	ModelRef               string                     `json:"model_ref,omitempty"`
+	WireFormat             string                     `json:"wire_format,omitempty"` // "auto" (default), "openai", "anthropic", "responses", "gemini"
+	Temperature            float64                    `json:"temperature"`
+	MaxTokens              int                        `json:"max_tokens"`
+	MaxOutputTokens        int                        `json:"max_output_tokens,omitempty"`
+	ContextWindow          int                        `json:"context_window,omitempty"`
+	ContextMargin          int                        `json:"context_margin,omitempty"`
+	ContextThreshold       int                        `json:"context_threshold"`
+	SupportsTools          *bool                      `json:"supports_tools,omitempty"`
+	ReasoningEffort        string                     `json:"reasoning_effort"`
+	Thinking               json.RawMessage            `json:"thinking,omitempty"`
+	ExtraBody              map[string]json.RawMessage `json:"extra_body,omitempty"`
+	Vision                 bool                       `json:"vision"`
+	AnthropicToolsDisabled bool                       `json:"anthropic_tools_disabled"`
 }
 
 // AWSBedrockConfig holds the upstream AWS Bedrock Mantle API settings.
@@ -175,6 +177,33 @@ type OpenRouterConfig struct {
 // EffectiveAPIKeys returns the pool of API keys for OpenRouter.
 // APIKeys takes precedence; falls back to the single APIKey field.
 func (c *OpenRouterConfig) EffectiveAPIKeys() []string {
+	if len(c.APIKeys) > 0 {
+		return c.APIKeys
+	}
+	if c.APIKey != "" {
+		return []string{c.APIKey}
+	}
+	return nil
+}
+
+// ModelStudioConfig holds the upstream Alibaba Cloud Model Studio settings.
+// Model Studio (Bailian / DashScope) exposes an OpenAI-compatible endpoint,
+// which also serves the Token Plan gateway. Token Plan additionally offers a
+// native Anthropic endpoint under /apps/anthropic; set AnthropicBaseURL to use
+// it and requests pass through untransformed.
+type ModelStudioConfig struct {
+	BaseURL            string   `json:"base_url"`
+	AnthropicBaseURL   string   `json:"anthropic_base_url"`
+	APIKey             string   `json:"api_key,omitempty"`
+	APIKeys            []string `json:"api_keys,omitempty"`
+	TimeoutMs          int      `json:"timeout_ms"`
+	StreamTimeoutMs    int      `json:"stream_timeout_ms"`
+	StreamingTimeoutMs int      `json:"streaming_timeout_ms,omitempty"`
+}
+
+// EffectiveAPIKeys returns the pool of API keys for Model Studio.
+// APIKeys takes precedence; falls back to the single APIKey field.
+func (c *ModelStudioConfig) EffectiveAPIKeys() []string {
 	if len(c.APIKeys) > 0 {
 		return c.APIKeys
 	}

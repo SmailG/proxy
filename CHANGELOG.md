@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Model Studio provider (`model-studio`) for Alibaba Cloud Model Studio / Bailian / DashScope, including the Token Plan gateway. Registered in the provider registry, with its own `model_studio` config block, `ROUTATIC_PROXY_MODEL_STUDIO_API_KEY` / `_API_KEYS` / `_URL` env overrides, `routatic-proxy init --provider model-studio` preset, and `configs/config.token-plan.json`
+- Model Studio serves two wire formats: the native Anthropic endpoint (`anthropic_base_url`, which Token Plan exposes at `/apps/anthropic`) and OpenAI Chat Completions (`base_url`). Anthropic is preferred whenever it is configured — the request and response pass through untransformed, so tool use, `thinking` blocks and `cache_control` survive instead of making a lossy round trip. Opt out per model with `wire_format: "openai"` or `anthropic_tools_disabled`
+- `extra_body` on any model config: an object merged into the top level of the outgoing Chat Completions body, for vendor params with no first-class field (DashScope's `enable_thinking`). Opt-in per model, so other providers are unaffected
 - Tool-call ids are rewritten to Anthropic's allowed set (`[a-zA-Z0-9_-]`) in replies: kimi-k3 returns ids like `read_file:0`, which Anthropic-side checks of the saved history (compaction, the advisor tool) reject with a 400
 - Opt-in `jev_routing` classifier (TypeSafe System One, active by default once enabled, fail-open): classifies the latest user message semantically instead of by substring keywords. Off by default; when enabled the first 600 characters of the latest user message are sent to TypeSafe. See CONFIGURATION.md
 - `jev_routing` active mode reuses Jev's decision for tool-result-only turns (in-memory, 30 min, 256 entries, hash key; nothing extra is sent); startup warns when active mode is set with `enable_streaming_scenario_routing` false
@@ -21,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Dashboard config export no longer redacts `jev_routing.api_key_env` (a variable name, not a secret), and config import validates `jev_routing` before it replaces the file on disk
 
 ### Fixed
+- A Model Studio `403 Access to model denied` — Token Plan's per-model entitlement refusal — no longer blocks the whole provider. `IsAuthError` treats 401 and 403 alike on the assumption that every model on a provider shares one credential, which made a single out-of-tier model ID poison the rest of the fallback chain. `IsModelEntitlementError` (matching the `Access to model denied` body, so other 403s still block) exempts that case so the chain advances to a model the key can actually call; 403 on every other provider still short-circuits as before
+- On the Model Studio Anthropic path the model config's `temperature` and `max_tokens` were silently ignored: `NormalizedToAnthropic` copies only the model ID, and the Anthropic path is the default whenever `anthropic_base_url` is set. `applyModelStudioOverrides` now re-applies them, so both wire formats agree about the same config
+- Added `ROUTATIC_PROXY_MODEL_STUDIO_ANTHROPIC_URL`. Overriding only `..._MODEL_STUDIO_URL` moved no traffic once `anthropic_base_url` was configured, because `WireFormat` prefers the Anthropic endpoint — the documented gateway switch silently did nothing
 - Accept `openrouter` and `aws-bedrock` in `model_overrides` and `model_family_overrides`, matching the providers `models` and `fallbacks` already allow (#134)
 - `routatic-proxy update` now fails before downloading, with an actionable message, when the install directory is not writable (e.g. root-owned `/usr/local/bin`)
 - `routatic-proxy update` stages the download in the install directory, fixing cross-filesystem rename failures when the temp dir is a separate mount

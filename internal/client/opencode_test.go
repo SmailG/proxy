@@ -1150,3 +1150,110 @@ func TestOpenCodeClient_ZenOmitsOpenCodeSessionHeader(t *testing.T) {
 		t.Errorf("OpenCode Zen must not receive %s, got %q", core.OpenCodeSessionHeader, gotSession)
 	}
 }
+
+func TestIsModelStudio(t *testing.T) {
+	tests := []struct {
+		provider string
+		want     bool
+	}{
+		{ProviderModelStudio, true},
+		{"model_studio", true}, // underscore spelling normalizes
+		{ProviderOpenCodeGo, false},
+		{ProviderOpenRouter, false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			model := config.ModelConfig{Provider: tt.provider, ModelID: "qwen3.8-max"}
+			if got := IsModelStudio(model); got != tt.want {
+				t.Errorf("IsModelStudio(provider=%q) = %v, want %v", tt.provider, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestModelStudioKeys(t *testing.T) {
+	cfg := &config.Config{
+		APIKey: "global-key",
+		ModelStudio: config.ModelStudioConfig{
+			APIKeys: []string{"ms-key-1", "ms-key-2"},
+		},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "")
+
+	if got := ProviderKeyCount(atomicCfg, ProviderModelStudio); got != 2 {
+		t.Errorf("ProviderKeyCount(model-studio) = %d, want 2", got)
+	}
+
+	// ProviderKeyCount is what the fallback chain consults to decide whether an
+	// auth error should block the provider, so it must see Model Studio's pool.
+	single := config.NewAtomicConfig(&config.Config{
+		ModelStudio: config.ModelStudioConfig{APIKey: "one"},
+	}, "")
+	if got := ProviderKeyCount(single, ProviderModelStudio); got != 1 {
+		t.Errorf("ProviderKeyCount(model-studio, single key) = %d, want 1", got)
+	}
+}
+
+// Model Studio is always registered in the provider registry, so the legacy
+// client never serves it — but the handler still asks the client for timeouts
+// on the provider path, so those arms are live and must not fall through to Go.
+func TestModelStudioTimeout(t *testing.T) {
+	cfg := &config.Config{
+		OpenCodeGo: config.OpenCodeGoConfig{
+			TimeoutMs:          11111,
+			StreamTimeoutMs:    22222,
+			StreamingTimeoutMs: 33333,
+		},
+		ModelStudio: config.ModelStudioConfig{
+			TimeoutMs:          120000,
+			StreamTimeoutMs:    180000,
+			StreamingTimeoutMs: 240000,
+		},
+	}
+	c := NewOpenCodeClient(config.NewAtomicConfig(cfg, ""), nil)
+	model := config.ModelConfig{Provider: ProviderModelStudio, ModelID: "qwen3.8-max"}
+
+	if got, want := c.RequestTimeout(model), 120*time.Second; got != want {
+		t.Errorf("RequestTimeout() = %v, want %v", got, want)
+	}
+	if got, want := c.StreamingTimeout(model), 240*time.Second; got != want {
+		t.Errorf("StreamingTimeout() = %v, want %v", got, want)
+	}
+	if got, want := c.StreamIdleTimeout(model), 180*time.Second; got != want {
+		t.Errorf("StreamIdleTimeout() = %v, want %v", got, want)
+	}
+}
+
+func TestModelStudioTimeout_FallsBackToTimeoutMs(t *testing.T) {
+	cfg := &config.Config{
+		ModelStudio: config.ModelStudioConfig{TimeoutMs: 120000},
+	}
+	c := NewOpenCodeClient(config.NewAtomicConfig(cfg, ""), nil)
+	model := config.ModelConfig{Provider: ProviderModelStudio, ModelID: "qwen3.8-max"}
+
+	if got, want := c.StreamingTimeout(model), 120*time.Second; got != want {
+		t.Errorf("StreamingTimeout() = %v, want %v (should fall back to timeout_ms)", got, want)
+	}
+	if got, want := c.StreamIdleTimeout(model), 120*time.Second; got != want {
+		t.Errorf("StreamIdleTimeout() = %v, want %v (should fall back to timeout_ms)", got, want)
+	}
+}
+
+// getProviderAPIKeys intentionally has no Model Studio arm — see its doc
+// comment. This pins that decision so a half-added branch cannot reappear.
+func TestModelStudioNotInLegacyKeyPath(t *testing.T) {
+	cfg := &config.Config{
+		APIKey:      "global-key",
+		OpenCodeGo:  config.OpenCodeGoConfig{APIKey: "go-key"},
+		ModelStudio: config.ModelStudioConfig{APIKey: "ms-key"},
+	}
+	c := NewOpenCodeClient(config.NewAtomicConfig(cfg, ""), nil)
+	model := config.ModelConfig{Provider: ProviderModelStudio, ModelID: "qwen3.8-max"}
+
+	got := c.getProviderAPIKeys(model)
+	if len(got) == 1 && got[0] == "ms-key" {
+		t.Error("getProviderAPIKeys() returned Model Studio keys; the legacy client does not serve this provider")
+	}
+}

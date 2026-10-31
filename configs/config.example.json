@@ -379,6 +379,16 @@
     "streaming_timeout_ms": 600000
   },
 
+  "model_studio": {
+    "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+    "anthropic_base_url": "",
+    "api_key": "",
+    "api_keys": [],
+    "timeout_ms": 300000,
+    "stream_timeout_ms": 60000,
+    "streaming_timeout_ms": 600000
+  },
+
   "catalog": {
     "enabled": true,
     "max_age_hours": 24,

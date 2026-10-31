@@ -1771,3 +1771,61 @@ func TestTransformTools_PreservesAdditionalPropertiesWhenSet(t *testing.T) {
 		t.Fatalf("existing additionalProperties should be preserved: %s", params)
 	}
 }
+
+// DashScope reads enable_thinking at the top level of the chat request, so the
+// model config's extra_body must reach the outgoing request untouched.
+func TestTransformRequest_PropagatesExtraBody(t *testing.T) {
+	transformer := NewRequestTransformer()
+	stream := true
+
+	req := &types.MessageRequest{
+		Model:     "claude-test",
+		MaxTokens: 256,
+		Stream:    &stream,
+		Messages: []types.Message{
+			{Role: "user", Content: json.RawMessage(`"hello"`)},
+		},
+	}
+
+	model := config.ModelConfig{
+		Provider:  "model-studio",
+		ModelID:   "qwen3.8-flash",
+		ExtraBody: map[string]json.RawMessage{"enable_thinking": json.RawMessage("false")},
+	}
+
+	openaiReq, err := transformer.TransformRequest(req, model)
+	if err != nil {
+		t.Fatalf("TransformRequest() error = %v", err)
+	}
+
+	got, ok := openaiReq.ExtraBody["enable_thinking"]
+	if !ok {
+		t.Fatalf("ExtraBody = %v, want enable_thinking present", openaiReq.ExtraBody)
+	}
+	if string(got) != "false" {
+		t.Errorf("ExtraBody[enable_thinking] = %s, want false", got)
+	}
+}
+
+func TestTransformRequest_ExtraBodyNilWhenUnconfigured(t *testing.T) {
+	transformer := NewRequestTransformer()
+	stream := true
+
+	req := &types.MessageRequest{
+		Model:     "claude-test",
+		MaxTokens: 256,
+		Stream:    &stream,
+		Messages: []types.Message{
+			{Role: "user", Content: json.RawMessage(`"hello"`)},
+		},
+	}
+
+	openaiReq, err := transformer.TransformRequest(req, config.ModelConfig{ModelID: "deepseek-v4-pro"})
+	if err != nil {
+		t.Fatalf("TransformRequest() error = %v", err)
+	}
+
+	if openaiReq.ExtraBody != nil {
+		t.Errorf("ExtraBody = %v, want nil when the model config sets none", openaiReq.ExtraBody)
+	}
+}

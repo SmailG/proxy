@@ -207,7 +207,7 @@ func TestGetProviderConfig_UnknownProvider(t *testing.T) {
 }
 
 func TestGetProviderConfig_AllProviders(t *testing.T) {
-	providers := []string{"opencode-go", "opencode-zen", "aws-bedrock", "openrouter"}
+	providers := []string{"opencode-go", "opencode-zen", "aws-bedrock", "openrouter", "model-studio"}
 
 	for _, provider := range providers {
 		t.Run(provider, func(t *testing.T) {

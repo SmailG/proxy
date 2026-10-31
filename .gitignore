@@ -32,5 +32,8 @@ node_modules/
 # Cursor / agent state (keep rules committed, ignore runtime state)
 .cursor/hooks/state/
 
+# Qwen Code scratch: review plans, agent prompts, generated workflow scripts
+.qwen/tmp/
+
 # SpecStory session artifacts
 .specstory/

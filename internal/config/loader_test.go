@@ -1590,3 +1590,23 @@ func TestValidateExtraBody_AllowsVendorKeys(t *testing.T) {
 		t.Errorf("validate() error = %v, want nil for a vendor key", err)
 	}
 }
+
+// getEndpoint posts to OpenRouter's BaseURL verbatim, so a default without the
+// /chat/completions suffix 404s.
+func TestDefaults_OpenRouterBaseURLIsFullChatCompletionsURL(t *testing.T) {
+	clearAmbientProviderEnv(t)
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"api_key": "test-key"}`), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+	_ = os.Setenv("ROUTATIC_PROXY_CONFIG", cfgPath)
+	defer func() { _ = os.Unsetenv("ROUTATIC_PROXY_CONFIG") }()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !strings.HasSuffix(cfg.OpenRouter.BaseURL, "/chat/completions") {
+		t.Errorf("OpenRouter.BaseURL = %q, want a full /chat/completions URL", cfg.OpenRouter.BaseURL)
+	}
+}

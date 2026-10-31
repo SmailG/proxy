@@ -15,6 +15,7 @@
 [![OpenCode Zen](https://img.shields.io/badge/OpenCode_Zen-7C4DFF?style=for-the-badge&logo=codeforces&logoColor=white)](https://opencode.ai/docs/zen/)
 [![AWS Bedrock](https://img.shields.io/badge/AWS_Bedrock-FF9900?style=for-the-badge&logo=amazon-aws&logoColor=white)](https://aws.amazon.com/bedrock/)
 [![OpenRouter](https://img.shields.io/badge/OpenRouter-10A37F?style=for-the-badge&logo=openai&logoColor=white)](https://openrouter.ai/)
+[![Model Studio](https://img.shields.io/badge/Model_Studio-FF6A00?style=for-the-badge&logo=alibabacloud&logoColor=white)](https://www.alibabacloud.com/en/product/modelstudio)
 [![Anthropic](https://img.shields.io/badge/Anthropic-D4A574?style=for-the-badge&logo=anthropic&logoColor=black)](https://www.anthropic.com/)
 
 </div>
@@ -25,6 +26,7 @@
 | **OpenCode Zen** | Curated, tested models with pay-as-you-go pricing | Claude/GPT/Gemini access without multiple API keys |
 | **AWS Bedrock** | Enterprise-grade models on your own AWS infrastructure | Enterprises needing data sovereignty and compliance |
 | **OpenRouter** | Unified API for 100+ LLMs with automatic failover | Experimenting with models from multiple providers |
+| **Model Studio** | Alibaba Cloud Model Studio (Bailian/DashScope) — Qwen, GLM, DeepSeek; native Anthropic endpoint on Token Plan | Qwen-family models, Token Plan subscribers |
 | **Anthropic** | Native Claude models with anthropic-first failover mode | Claude-first workflows with OpenCode fallback |
 
 ---

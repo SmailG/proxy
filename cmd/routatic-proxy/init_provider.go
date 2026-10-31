@@ -46,6 +46,13 @@ var providerPresets = map[string]ProviderPreset{
 		BaseURL:     "https://openrouter.ai/api/v1/chat/completions",
 		Generator:   getOpenRouterConfig,
 	},
+	"model-studio": {
+		Name:        "Alibaba Cloud Model Studio",
+		EnvVarName:  "ROUTATIC_PROXY_MODEL_STUDIO_API_KEY",
+		Description: "Alibaba Cloud Model Studio (Bailian/DashScope) - Qwen, GLM and DeepSeek. Set base_url to the Token Plan gateway to use a Token Plan key",
+		BaseURL:     "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+		Generator:   getModelStudioConfig,
+	},
 }
 
 // getProviderConfig returns a config template optimized for a specific provider.
@@ -139,6 +146,97 @@ func getOpenRouterConfig() string {
   "openrouter": {
     "base_url": "https://openrouter.ai/api/v1/chat/completions",
     "api_key": "${ROUTATIC_PROXY_OPENROUTER_API_KEY}",
+    "api_keys": [],
+    "timeout_ms": 300000,
+    "stream_timeout_ms": 60000,
+    "streaming_timeout_ms": 600000
+  },
+
+  "logging": {
+    "level": "info",
+    "requests": true
+  }
+}
+`
+}
+
+// getModelStudioConfig returns a config optimized for Alibaba Cloud Model Studio.
+// The base_url below is the standard international gateway; Token Plan subscribers
+// point it at the Token Plan host instead (see configs/config.token-plan.json).
+func getModelStudioConfig() string {
+	return `{
+  "api_key": "${ROUTATIC_PROXY_API_KEY}",
+  "host": "127.0.0.1",
+  "port": 3456,
+  "hot_reload": false,
+  "enable_streaming_scenario_routing": false,
+  "respect_requested_model": false,
+
+  "models": {
+    "default": {
+      "provider": "model-studio",
+      "model_id": "qwen3.8-max",
+      "temperature": 0.7,
+      "max_tokens": 8192
+    },
+    "background": {
+      "provider": "model-studio",
+      "model_id": "deepseek-v4.1-flash",
+      "temperature": 0.5,
+      "max_tokens": 2048
+    },
+    "think": {
+      "provider": "model-studio",
+      "model_id": "glm-5.3",
+      "temperature": 0.7,
+      "max_tokens": 8192
+    },
+    "complex": {
+      "provider": "model-studio",
+      "model_id": "qwen3.8-max",
+      "temperature": 0.7,
+      "max_tokens": 8192
+    },
+    "long_context": {
+      "provider": "model-studio",
+      "model_id": "qwen3.8-flash",
+      "temperature": 0.7,
+      "max_tokens": 16384,
+      "context_threshold": 80000
+    },
+    "fast": {
+      "provider": "model-studio",
+      "model_id": "qwen3.8-flash",
+      "temperature": 0.7,
+      "max_tokens": 4096
+    }
+  },
+
+  "fallbacks": {
+    "default": [
+      { "provider": "model-studio", "model_id": "qwen3.7-max" },
+      { "provider": "model-studio", "model_id": "deepseek-v4-pro" }
+    ],
+    "background": [
+      { "provider": "model-studio", "model_id": "deepseek-v4-flash-0731" }
+    ],
+    "think": [
+      { "provider": "model-studio", "model_id": "glm-5.2" }
+    ],
+    "complex": [
+      { "provider": "model-studio", "model_id": "qwen3.7-max" }
+    ],
+    "long_context": [
+      { "provider": "model-studio", "model_id": "qwen3.7-plus" }
+    ],
+    "fast": [
+      { "provider": "model-studio", "model_id": "qwen3.6-flash" }
+    ]
+  },
+
+  "model_studio": {
+    "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+    "api_key": "${ROUTATIC_PROXY_MODEL_STUDIO_API_KEY}",
     "api_keys": [],
     "timeout_ms": 300000,
     "stream_timeout_ms": 60000,

@@ -61,3 +61,11 @@ func TestNormalizeRequestPreservesLegacyToolResultOutput(t *testing.T) {
 		t.Fatalf("normalized tool result content = %s, want %s", got, want)
 	}
 }
+
+func TestNormalizeRequestCarriesTopP(t *testing.T) {
+	topP := 0.9
+	nr := NormalizeRequest(&types.MessageRequest{Model: "m", MaxTokens: 10, TopP: &topP})
+	if nr.TopP == nil || *nr.TopP != topP {
+		t.Fatalf("TopP = %v, want %v", nr.TopP, topP)
+	}
+}

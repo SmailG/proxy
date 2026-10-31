@@ -661,6 +661,129 @@ func TestExecuteWithFallback_AuthErrorShortCircuits(t *testing.T) {
 	}
 }
 
+func TestIsModelEntitlementError(t *testing.T) {
+	denied := &client.APIError{StatusCode: 403, Body: `{"error":{"message":"Access to model denied"}}`}
+
+	tests := []struct {
+		name     string
+		err      error
+		provider string
+		want     bool
+	}{
+		{"model-studio 403 is per-model", denied, config.ProviderModelStudio, true},
+		{"model-studio 401 is still a credential failure", &client.APIError{StatusCode: 401}, config.ProviderModelStudio, false},
+		{"model-studio 400 is not", &client.APIError{StatusCode: 400}, config.ProviderModelStudio, false},
+		{"another provider's 403 is a credential failure", denied, config.ProviderOpenCodeGo, false},
+		{"openrouter 403 is a credential failure", denied, config.ProviderOpenRouter, false},
+		{"nil error", nil, config.ProviderModelStudio, false},
+		{"non-APIError", errors.New("boom"), config.ProviderModelStudio, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsModelEntitlementError(tt.err, tt.provider); got != tt.want {
+				t.Errorf("IsModelEntitlementError(%v, %q) = %v, want %v", tt.err, tt.provider, got, tt.want)
+			}
+		})
+	}
+}
+
+// Token Plan answers 403 for a model ID outside the key's tier while the key
+// itself is valid. Blocking the whole provider there would defeat the fallback
+// chain, which exists precisely to reach the models the key CAN call.
+func TestExecuteWithFallback_ModelStudioEntitlement403ContinuesChain(t *testing.T) {
+	logger := slog.Default()
+	handler := NewFallbackHandler(logger, 3, 30*time.Second)
+
+	models := []config.ModelConfig{
+		{Provider: config.ProviderModelStudio, ModelID: "kimi-k2.6"},   // outside the tier
+		{Provider: config.ProviderModelStudio, ModelID: "qwen3.8-max"}, // inside it
+	}
+
+	denied := &client.APIError{StatusCode: 403, Body: `{"error":{"message":"Access to model denied"}}`}
+
+	var tried []string
+	_, body, err := handler.ExecuteWithFallback(context.Background(), models,
+		func(ctx context.Context, model config.ModelConfig) ([]byte, error) {
+			tried = append(tried, model.ModelID)
+			if model.ModelID == "kimi-k2.6" {
+				return nil, denied
+			}
+			return []byte(`{"ok":true}`), nil
+		},
+	)
+
+	if err != nil {
+		t.Fatalf("ExecuteWithFallback() error = %v, want the second model to succeed", err)
+	}
+	if len(tried) != 2 {
+		t.Errorf("tried %v, want both models (the 403 must not block the provider)", tried)
+	}
+	if string(body) != `{"ok":true}` {
+		t.Errorf("body = %s, want the second model's response", body)
+	}
+}
+
+// When the key lacks access to every model, the caller must still see the 403
+// so IsAuthError holds, rather than a generic "all models failed".
+func TestExecuteWithFallback_ModelStudioAllDeniedReturns403(t *testing.T) {
+	handler := NewFallbackHandler(slog.Default(), 3, 30*time.Second)
+
+	models := []config.ModelConfig{
+		{Provider: config.ProviderModelStudio, ModelID: "kimi-k2.6"},
+		{Provider: config.ProviderModelStudio, ModelID: "qwen3.8-max"},
+	}
+	denied := &client.APIError{StatusCode: 403, Body: `{"error":{"message":"Access to model denied"}}`}
+
+	result, _, err := handler.ExecuteWithFallback(context.Background(), models,
+		func(ctx context.Context, model config.ModelConfig) ([]byte, error) {
+			return nil, denied
+		},
+	)
+
+	if !errors.Is(err, denied) {
+		t.Fatalf("err = %v, want the original 403", err)
+	}
+	if !IsAuthError(err) {
+		t.Error("IsAuthError(err) = false, want true")
+	}
+	if result == nil || result.Attempted != 2 {
+		t.Errorf("result = %+v, want both models attempted", result)
+	}
+}
+
+// The same 403 on a provider whose models genuinely share one credential must
+// still short-circuit — the exemption is Model Studio-specific.
+func TestExecuteWithFallback_OtherProvider403StillBlocks(t *testing.T) {
+	logger := slog.Default()
+	handler := NewFallbackHandler(logger, 3, 30*time.Second)
+
+	models := []config.ModelConfig{
+		{Provider: config.ProviderOpenRouter, ModelID: "model-a"},
+		{Provider: config.ProviderOpenRouter, ModelID: "model-b"},
+	}
+
+	denied := &client.APIError{StatusCode: 403, Body: `{"error":{"message":"Access denied"}}`}
+
+	callCount := 0
+	_, _, err := handler.ExecuteWithFallback(context.Background(), models,
+		func(ctx context.Context, model config.ModelConfig) ([]byte, error) {
+			callCount++
+			return nil, denied
+		},
+	)
+
+	if callCount != 1 {
+		t.Errorf("executor called %d times, want 1 (provider blocked on 403)", callCount)
+	}
+	if err == nil {
+		t.Fatal("expected error for auth failure")
+	}
+	if !IsAuthError(err) {
+		t.Errorf("expected auth error, got: %v", err)
+	}
+}
+
 func TestExecuteWithFallback_AuthErrorWithMultipleProviders(t *testing.T) {
 	logger := slog.Default()
 	handler := NewFallbackHandler(logger, 3, 30*time.Second)
@@ -1019,5 +1142,53 @@ func TestExecuteWithFallback_PlainRateLimitDoesNotForceOpen(t *testing.T) {
 
 	if got := h.getCircuitBreaker("model-a").State(); got == CircuitOpen {
 		t.Errorf("model-a circuit = %v; a transient 429 must not open it on one failure", got)
+	}
+}
+
+// A 403 whose body is not the per-model refusal (expired key, unpaid account)
+// is a credential failure and must still block the provider.
+func TestExecuteWithFallback_ModelStudioCredential403StillBlocks(t *testing.T) {
+	handler := NewFallbackHandler(slog.Default(), 3, 30*time.Second)
+	models := []config.ModelConfig{
+		{Provider: config.ProviderModelStudio, ModelID: "a"},
+		{Provider: config.ProviderModelStudio, ModelID: "b"},
+	}
+	forbidden := &client.APIError{StatusCode: 403, Body: `{"error":{"message":"Account in arrears"}}`}
+
+	var tried int
+	_, _, err := handler.ExecuteWithFallback(context.Background(), models,
+		func(ctx context.Context, model config.ModelConfig) ([]byte, error) {
+			tried++
+			return nil, forbidden
+		},
+	)
+	if !IsAuthError(err) {
+		t.Fatalf("err = %v, want an auth error", err)
+	}
+	if tried != 1 {
+		t.Errorf("tried %d models, want 1 (provider should be blocked)", tried)
+	}
+}
+
+// 403 on one model then 500 on the next is not an auth problem.
+func TestExecuteWithFallback_ModelStudioMixedFailuresNotAuth(t *testing.T) {
+	handler := NewFallbackHandler(slog.Default(), 3, 30*time.Second)
+	models := []config.ModelConfig{
+		{Provider: config.ProviderModelStudio, ModelID: "a"},
+		{Provider: config.ProviderModelStudio, ModelID: "b"},
+	}
+	denied := &client.APIError{StatusCode: 403, Body: `{"error":{"message":"Access to model denied"}}`}
+	boom := &client.APIError{StatusCode: 500, Body: "boom"}
+
+	_, _, err := handler.ExecuteWithFallback(context.Background(), models,
+		func(ctx context.Context, model config.ModelConfig) ([]byte, error) {
+			if model.ModelID == "a" {
+				return nil, denied
+			}
+			return nil, boom
+		},
+	)
+	if err == nil || IsAuthError(err) {
+		t.Fatalf("err = %v, want a non-auth failure", err)
 	}
 }

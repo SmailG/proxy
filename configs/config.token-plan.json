@@ -1,0 +1,110 @@
+{
+  "api_key": "${BAILIAN_TOKEN_PLAN_API_KEY}",
+  "host": "127.0.0.1",
+  "port": 3456,
+  "enable_streaming_scenario_routing": true,
+  "respect_requested_model": false,
+
+  "models": {
+    "default": {
+      "provider": "model-studio",
+      "model_id": "qwen3.8-max",
+      "temperature": 0.7,
+      "max_tokens": 8192
+    },
+    "complex": {
+      "provider": "model-studio",
+      "model_id": "qwen3.8-max",
+      "temperature": 0.7,
+      "max_tokens": 8192
+    },
+    "think": {
+      "provider": "model-studio",
+      "model_id": "glm-5.3",
+      "temperature": 0.7,
+      "max_tokens": 8192
+    },
+    "background": {
+      "provider": "model-studio",
+      "model_id": "deepseek-v4.1-flash",
+      "temperature": 0.5,
+      "max_tokens": 2048
+    },
+    "fast": {
+      "provider": "model-studio",
+      "model_id": "qwen3.8-flash",
+      "temperature": 0.7,
+      "max_tokens": 4096
+    },
+    "long_context": {
+      "provider": "model-studio",
+      "model_id": "qwen3.8-flash",
+      "temperature": 0.7,
+      "max_tokens": 16384,
+      "context_threshold": 80000
+    }
+  },
+
+  "fallbacks": {
+    "default": [
+      { "provider": "model-studio", "model_id": "qwen3.7-max" },
+      { "provider": "model-studio", "model_id": "deepseek-v4-pro" }
+    ],
+    "complex": [
+      { "provider": "model-studio", "model_id": "qwen3.7-max" },
+      { "provider": "model-studio", "model_id": "glm-5.3" }
+    ],
+    "think": [
+      { "provider": "model-studio", "model_id": "glm-5.2" },
+      { "provider": "model-studio", "model_id": "qwen3.8-max" }
+    ],
+    "background": [
+      { "provider": "model-studio", "model_id": "deepseek-v4-flash-0731" },
+      { "provider": "model-studio", "model_id": "qwen3.6-flash" }
+    ],
+    "fast": [
+      { "provider": "model-studio", "model_id": "qwen3.6-flash" },
+      { "provider": "model-studio", "model_id": "deepseek-v4.1-flash-1017" }
+    ],
+    "long_context": [
+      { "provider": "model-studio", "model_id": "qwen3.7-plus" },
+      { "provider": "model-studio", "model_id": "deepseek-v4-pro" }
+    ]
+  },
+
+  "model_family_overrides": {
+    "opus": {
+      "provider": "model-studio",
+      "model_id": "qwen3.8-max",
+      "temperature": 0.7,
+      "max_tokens": 8192
+    },
+    "sonnet": {
+      "provider": "model-studio",
+      "model_id": "qwen3.8-max",
+      "temperature": 0.7,
+      "max_tokens": 8192
+    },
+    "haiku": {
+      "provider": "model-studio",
+      "model_id": "qwen3.8-flash",
+      "temperature": 0.7,
+      "max_tokens": 4096
+    }
+  },
+
+  "model_studio": {
+    "base_url": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+    "anthropic_base_url": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
+    "api_key": "${BAILIAN_TOKEN_PLAN_API_KEY}",
+    "api_keys": [],
+    "timeout_ms": 300000,
+    "stream_timeout_ms": 60000,
+    "streaming_timeout_ms": 600000
+  },
+
+  "logging": {
+    "level": "info",
+    "requests": true
+  }
+}

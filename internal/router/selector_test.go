@@ -19,6 +19,48 @@ func selectorTestCatalog(t *testing.T) *catalog.IndexedCatalog {
 	return cat
 }
 
+func TestEnabledProviders_ModelStudio(t *testing.T) {
+	t.Run("provider key enables model-studio alone", func(t *testing.T) {
+		cfg := &config.Config{ModelStudio: config.ModelStudioConfig{APIKey: "ms-key"}}
+		got := enabledProviders(cfg)
+		if !got[config.ProviderModelStudio] {
+			t.Errorf("model-studio not enabled despite having a key; got %v", got)
+		}
+		for _, p := range []string{"opencode-go", "opencode-zen", "aws-bedrock", "openrouter"} {
+			if got[p] {
+				t.Errorf("%s enabled with no key of its own; got %v", p, got)
+			}
+		}
+	})
+
+	t.Run("no model-studio key leaves it disabled", func(t *testing.T) {
+		cfg := &config.Config{OpenRouter: config.OpenRouterConfig{APIKey: "or-key"}}
+		if got := enabledProviders(cfg); got[config.ProviderModelStudio] {
+			t.Errorf("model-studio enabled with no key; got %v", got)
+		}
+	})
+
+	t.Run("global key enables model-studio too", func(t *testing.T) {
+		cfg := &config.Config{APIKey: "global-key"}
+		if got := enabledProviders(cfg); !got[config.ProviderModelStudio] {
+			t.Errorf("model-studio not enabled by the global key; got %v", got)
+		}
+	})
+}
+
+// A provider added to config.KnownProviders but not to the enabledProviders map
+// is invisible to cost-based routing — no key check ever enables it, so
+// SelectCheapest silently never considers its models. This fails the build
+// rather than the user's routing.
+func TestEnabledProviders_CoversEveryKnownProvider(t *testing.T) {
+	got := enabledProviders(&config.Config{APIKey: "global-key"})
+	for _, p := range config.KnownProviders {
+		if !got[p] {
+			t.Errorf("known provider %q is missing from enabledProviders()", p)
+		}
+	}
+}
+
 func TestSelectCheapest_SelectsCheapestModel(t *testing.T) {
 	cfg := &config.Config{
 		OpenCodeGo: config.OpenCodeGoConfig{APIKey: "go-key"},

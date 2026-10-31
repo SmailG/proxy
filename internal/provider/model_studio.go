@@ -319,9 +319,10 @@ func withSuffix(raw, suffix, field string) (string, error) {
 //
 // When the client enabled extended thinking the overrides are skipped: Anthropic
 // validates max_tokens against the thinking budget and requires temperature 1,
-// so a config value could turn a valid request into a 400.
+// so a config value could turn a valid request into a 400. An explicit
+// `{"type":"disabled"}` is not enabled thinking, so the overrides still apply.
 func applyModelStudioOverrides(req *types.MessageRequest, model config.ModelConfig) {
-	if len(req.Thinking) > 0 {
+	if thinkingEnabled(req.Thinking) {
 		return
 	}
 	if model.Temperature > 0 {
@@ -331,6 +332,22 @@ func applyModelStudioOverrides(req *types.MessageRequest, model config.ModelConf
 	if model.MaxTokens > 0 {
 		req.MaxTokens = model.MaxTokens
 	}
+}
+
+// thinkingEnabled reports whether a request's thinking block turns extended
+// thinking on. Absent or `disabled` is off; any other type, or a block that
+// cannot be parsed, counts as on so the overrides stay out of its way.
+func thinkingEnabled(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var tc struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(raw, &tc); err != nil {
+		return true
+	}
+	return tc.Type != "disabled"
 }
 
 // apiKey returns the Model Studio key pool in round-robin order, falling back

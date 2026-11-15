@@ -204,17 +204,25 @@ func loadPlist(plistPath string) error {
 	domain := "gui/" + uid
 	target := domain + "/" + LaunchAgent
 
-	_ = exec.Command("launchctl", "bootout", target).Run()
-	return exec.Command("launchctl", "bootstrap", domain, plistPath).Run()
+	_ = runLaunchctl("bootout", target)
+	return runLaunchctl("bootstrap", domain, plistPath)
 }
 
 func unloadPlist(plistPath string) error {
 	uid := strconv.Itoa(os.Getuid())
 	target := "gui/" + uid + "/" + LaunchAgent
-	return exec.Command("launchctl", "bootout", target).Run()
+	return runLaunchctl("bootout", target)
 }
 
 func isPlistLoaded() bool {
-	err := exec.Command("launchctl", "list", LaunchAgent).Run()
-	return err == nil
+	return runLaunchctl("list", LaunchAgent) == nil
+}
+
+// runLaunchctl is the seam tests replace. The domain it targets is
+// gui/<uid>/<label>, which a test's temporary HOME does not redirect, so without
+// this seam a test that exercises Enable/DisableAutostart boots out the real
+// LaunchAgent: it SIGTERMs the developer's running proxy and, because
+// KeepAlive.SuccessfulExit is false, launchd leaves it stopped.
+var runLaunchctl = func(args ...string) error {
+	return exec.Command("launchctl", args...).Run()
 }

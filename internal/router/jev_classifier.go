@@ -105,13 +105,43 @@ type jevState struct {
 	Request string `json:"request"`
 }
 
+// jevProbabilities is the level -> probability map of a Score answer, keyed by
+// level number as a string ("0", "1", "2").
+//
+// It decodes through pointers on purpose. JSON null lands in a float64 as a
+// silent zero, so {"0":1,"1":null,"2":null} would otherwise be indistinguishable
+// from a real distribution: it has three levels, every value is in range, and it
+// sums to 1. Rejecting null here keeps a malformed reply from steering routing.
+type jevProbabilities map[string]float64
+
+func (p *jevProbabilities) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		// Deliberately not wrapped: a decode error can quote the response body,
+		// and Classify's contract is that error text never carries one.
+		return errors.New("response probabilities are not a level-keyed object")
+	}
+	out := make(jevProbabilities, len(raw))
+	for level, value := range raw {
+		var v *float64
+		if err := json.Unmarshal(value, &v); err != nil {
+			return fmt.Errorf("probability for level %s is not a number", level)
+		}
+		if v == nil {
+			return fmt.Errorf("probability for level %s is null", level)
+		}
+		out[level] = *v
+	}
+	*p = out
+	return nil
+}
+
 type jevAnswer struct {
-	Type       string   `json:"type"`
-	Score      *float64 `json:"score"`
-	Confidence *float64 `json:"confidence"`
-	// Probabilities is keyed by level number as a string ("0", "1", "2").
-	Probabilities map[string]float64 `json:"probabilities"`
-	Noul          *float64           `json:"noul"`
+	Type          string           `json:"type"`
+	Score         *float64         `json:"score"`
+	Confidence    *float64         `json:"confidence"`
+	Probabilities jevProbabilities `json:"probabilities"`
+	Noul          *float64         `json:"noul"`
 }
 
 type jevResponseBody struct {

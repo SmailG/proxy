@@ -3,7 +3,9 @@
 package daemon
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -122,4 +124,29 @@ func mustExecutable(t *testing.T) string {
 		t.Fatalf("os.Executable: %v", err)
 	}
 	return p
+}
+
+// The wrapper names the failed subcommand because callers report the error
+// without saying which operation they were performing, and "exit status 1" does
+// not distinguish a failed bootstrap from a failed bootout.
+//
+// This is the one test in the package that calls the real launchctl. The
+// subcommand is invented and names no domain and no service, so unlike every
+// other invocation here it cannot reach a LaunchAgent; Run discards its usage
+// output. It is the only way to exercise the wrapper, which recordLaunchctl
+// replaces wholesale.
+func TestRunLaunchctl_WrapsErrorsWithTheSubcommand(t *testing.T) {
+	err := runLaunchctl("routatic-inert-subcommand-for-test")
+	if err == nil {
+		t.Fatal("an unrecognized subcommand was accepted")
+	}
+	if !strings.Contains(err.Error(), "launchctl routatic-inert-subcommand-for-test") {
+		t.Errorf("err = %v, want it to name the subcommand", err)
+	}
+	// %w rather than %v: a caller that needs the exit status must still be able
+	// to reach it through the wrap.
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Errorf("err = %v, want the *exec.ExitError to survive wrapping", err)
+	}
 }

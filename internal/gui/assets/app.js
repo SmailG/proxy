@@ -1088,6 +1088,20 @@ async function loadProxyConfig() {
   }
 }
 
+// ValidityState exposes no enumerable keys, so the flags have to be listed.
+const VALIDITY_FLAGS = ['badInput', 'customError', 'patternMismatch', 'rangeOverflow',
+  'rangeUnderflow', 'tooLong', 'tooShort', 'typeMismatch', 'valueMissing'];
+
+// stepMismatch is a spinner hint rather than a rule: 0.33 is a fine confidence
+// floor even though no click of a step=0.05 arrow reaches it. It must not mask the
+// real constraints, though — 1.01 in a min=0 max=1 input trips stepMismatch and
+// rangeOverflow together, and skipping validation there writes the out-of-range
+// value to disk.
+function hasBlockingValidityError(el) {
+  if (!el.validity) return false;
+  return VALIDITY_FLAGS.some(flag => el.validity[flag] === true);
+}
+
 async function saveProxyConfig() {
   if (!currentProxyConfig) {
     showSaveStatus('Config not loaded, cannot save', 'error');
@@ -1102,11 +1116,10 @@ async function saveProxyConfig() {
   // validates a jev_routing block only while it is enabled — a disable must
   // never be blocked by a dormant value — so without this an out-of-range
   // number is written to disk and only surfaces on the save that turns Jev on.
-  // stepMismatch is allowed through: the step is for the spinner, not a rule.
   for (const field of CONFIG_FIELDS) {
     const el = document.getElementById(field[1]);
-    if (!el || el.value === '' || el.validity.stepMismatch) continue;
-    if (!el.checkValidity()) {
+    if (!el || el.value === '') continue;
+    if (hasBlockingValidityError(el)) {
       const label = document.querySelector('label[for="' + field[1] + '"]');
       showSaveStatus('Invalid value for ' + (label ? label.textContent.trim() : field[0]), 'error');
       saveBtn.disabled = false;

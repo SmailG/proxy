@@ -3,6 +3,7 @@ package gui
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -31,8 +32,13 @@ func decodeJSONMap(data []byte, dst *map[string]any) error {
 //
 // Values equal to redactedSentinel are dropped rather than merged: GET hides
 // secrets behind that placeholder, so a client that posts back what it was given
-// must leave the real key alone instead of replacing it.
+// must leave the real key alone instead of replacing it. Where a placeholder
+// cannot be dropped safely, stripRedacted returns errRedactedEcho and nothing is
+// written.
 func mergeConfigPatch(path string, patch map[string]any) ([]byte, error) {
+	if err := stripRedacted(patch); err != nil {
+		return nil, err
+	}
 	rawFile, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading config %s: %w", path, err)
@@ -41,7 +47,6 @@ func mergeConfigPatch(path string, patch map[string]any) ([]byte, error) {
 	if err := decodeJSONMap(rawFile, &raw); err != nil {
 		return nil, fmt.Errorf("parsing config %s: %w", path, err)
 	}
-	stripRedacted(patch)
 	mergeJSONMap(raw, patch)
 	out, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
@@ -50,11 +55,18 @@ func mergeConfigPatch(path string, patch map[string]any) ([]byte, error) {
 	return out, nil
 }
 
-// stripRedacted deletes redaction placeholders from patch at any depth. A list
-// is dropped only when every element is the placeholder, which is the shape
-// anonymizeMap produces for an api_keys array; a partly-edited list is a real
-// value and must survive.
-func stripRedacted(m map[string]any) {
+// errRedactedEcho reports a patch that carries the redaction placeholder in a
+// place the merge cannot reconcile, so it is refused rather than guessed at.
+var errRedactedEcho = errors.New("hidden value cannot be saved as-is; type a new value to replace it")
+
+// stripRedacted deletes redaction placeholders from patch at any depth.
+//
+// A placeholder may only be dropped where the merge leaves the stored value
+// alone, which is true of a map key the patch omits. Lists are replaced
+// wholesale by mergeJSONMap, so dropping a placeholder inside one would lose the
+// stored secret, and a placeholder sitting beside real values in a list cannot be
+// told apart from an intentional key. Those shapes return errRedactedEcho.
+func stripRedacted(m map[string]any) error {
 	for k, v := range m {
 		switch t := v.(type) {
 		case string:
@@ -62,13 +74,20 @@ func stripRedacted(m map[string]any) {
 				delete(m, k)
 			}
 		case map[string]any:
-			stripRedacted(t)
+			if err := stripRedacted(t); err != nil {
+				return fmt.Errorf("%s: %w", k, err)
+			}
 		case []any:
 			if allRedacted(t) {
 				delete(m, k)
+				continue
+			}
+			if containsRedacted(t) {
+				return fmt.Errorf("%s: %w", k, errRedactedEcho)
 			}
 		}
 	}
+	return nil
 }
 
 func allRedacted(list []any) bool {
@@ -81,6 +100,27 @@ func allRedacted(list []any) bool {
 		}
 	}
 	return true
+}
+
+// containsRedacted reports whether the placeholder appears anywhere in v.
+func containsRedacted(v any) bool {
+	switch t := v.(type) {
+	case string:
+		return t == redactedSentinel
+	case map[string]any:
+		for _, child := range t {
+			if containsRedacted(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range t {
+			if containsRedacted(child) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // mergeJSONMap merges src into dst: objects merge key by key, anything else

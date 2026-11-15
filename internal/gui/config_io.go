@@ -61,6 +61,14 @@ func anonymizeMap(m map[string]interface{}) {
 			}
 		} else if nested, ok := value.(map[string]interface{}); ok {
 			anonymizeMap(nested)
+		} else if list, ok := value.([]interface{}); ok {
+			// fallbacks is a map of arrays of model objects, so without this an
+			// extra_body secret on a chain entry is served in clear.
+			for _, item := range list {
+				if nested, ok := item.(map[string]interface{}); ok {
+					anonymizeMap(nested)
+				}
+			}
 		}
 	}
 }

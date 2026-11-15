@@ -459,6 +459,58 @@ func TestParseJevResponse_RejectsPartialProbabilities(t *testing.T) {
 	}
 }
 
+// This one has to go through the decoder: null landing in a float64 as a silent
+// zero is the whole bug, so a struct built by hand cannot reproduce it. A reply
+// of {"0":1,"1":null,"2":null} has three levels, every value in range and a sum
+// of exactly 1 — every check parseLevelProbabilities makes passes, and with a
+// score of 0 it would route to background on a malformed answer.
+func TestJevProbabilities_RejectsNullThroughTheDecoder(t *testing.T) {
+	decode := func(t *testing.T, probabilities string) (jevProbabilities, error) {
+		t.Helper()
+		body := []byte(`{"model":"jev-1.14.0","answers":{` +
+			`"` + jevActionID + `":{"type":"score","score":0,"confidence":0.9,"probabilities":` + probabilities + `},` +
+			`"` + jevArchitectureID + `":{"type":"noul","noul":0.1}}}`)
+		var parsed jevResponseBody
+		err := json.Unmarshal(body, &parsed)
+		return parsed.Answers[jevActionID].Probabilities, err
+	}
+
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{"two nulls behind a real level", `{"0":1,"1":null,"2":null}`},
+		{"all null", `{"0":null,"1":null,"2":null}`},
+		{"one null", `{"0":0.5,"1":null,"2":0.5}`},
+		{"a string instead of a number", `{"0":"1","1":0,"2":0}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := decode(t, tc.in); err == nil {
+				t.Error("accepted a malformed distribution")
+			} else if strings.Contains(err.Error(), tc.in) {
+				t.Errorf("error quotes the response body: %v", err)
+			}
+		})
+	}
+
+	// Zero is a legitimate probability and must stay distinguishable from null,
+	// or the fix would reject honest answers that put nothing on two levels.
+	got, err := decode(t, `{"0":1,"1":0,"2":0}`)
+	if err != nil {
+		t.Fatalf("control: an explicit zero distribution was rejected: %v", err)
+	}
+	if got["1"] != 0 || got["2"] != 0 || got["0"] != 1 {
+		t.Errorf("probabilities = %v, want map[0:1 1:0 2:0]", got)
+	}
+	if _, err := parseJevResponse(jevResponseBody{Answers: map[string]jevAnswer{
+		jevActionID:       {Type: "score", Score: ptr(0), Confidence: ptr(0.9), Probabilities: got},
+		jevArchitectureID: {Type: "noul", Noul: ptr(0.1)},
+	}}); err != nil {
+		t.Errorf("control: parseJevResponse rejected the decoded distribution: %v", err)
+	}
+}
+
 // Confidence, the distribution and the peak level are what tell a clear answer
 // from a coin flip, so all of them have to survive parsing, along with the
 // model id and the token count the call cost.

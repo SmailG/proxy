@@ -69,7 +69,7 @@ func (r *ModelRouter) detectScenario(messages []MessageContent, tokenCount, tool
 	text := latestPromptText(messages)
 	if strings.TrimSpace(text) == "" {
 		if cfg.JevRouting.Mode == config.JevModeActive {
-			if res, ok := r.jevCached(messages, keyword); ok {
+			if res, ok := r.jevCached(cfg.JevRouting, messages, keyword); ok {
 				return res
 			}
 		}
@@ -149,13 +149,23 @@ func (r *ModelRouter) jevActive(jcfg config.JevRoutingConfig, messages []Message
 // jevCached serves a turn with no authored text (tool output only) from the
 // decision Jev made for the latest authored user message, so a task keeps its
 // model through a tool loop. Nothing is sent to Jev.
-func (r *ModelRouter) jevCached(messages []MessageContent, keyword ScenarioResult) (ScenarioResult, bool) {
+//
+// The entry is re-checked against the current floor rather than trusted: an
+// entry only passed the floor that was configured when it was cached, and
+// min_confidence is hot-reloadable while entries live for jevCacheTTL. Without
+// this a floor raised mid-session would not apply to the tool-result turns that
+// follow, which are most of an agentic loop.
+func (r *ModelRouter) jevCached(jcfg config.JevRoutingConfig, messages []MessageContent, keyword ScenarioResult) (ScenarioResult, bool) {
 	text := latestAuthoredText(messages)
 	if text == "" {
 		return ScenarioResult{}, false
 	}
 	res, ok := r.jev.cache.get(jevKey(text))
 	if !ok {
+		return ScenarioResult{}, false
+	}
+	if res.Confidence < jcfg.MinConfidence {
+		r.logJevAbstained(jcfg.Mode, keyword, res, jcfg.MinConfidence)
 		return ScenarioResult{}, false
 	}
 	scenario := jevScenarioForLevel(res.Level, hasToolBlocker(messages))

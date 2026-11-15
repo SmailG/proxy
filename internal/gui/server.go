@@ -451,6 +451,13 @@ func (s *Server) handleProxyConfig(w http.ResponseWriter, r *http.Request) {
 		// replace (at any depth) and unknown keys survive the save.
 		data, err := mergeConfigPatch(path, patch)
 		if err != nil {
+			// The client echoed back a placeholder GET had hidden. That is a bad
+			// request, not a server fault, and saying so tells the user to type a
+			// replacement instead of leaving them with an opaque failure.
+			if errors.Is(err, errRedactedEcho) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			s.logInternal("merging config patch", err)
 			http.Error(w, "could not apply the config patch", http.StatusInternalServerError)
 			return

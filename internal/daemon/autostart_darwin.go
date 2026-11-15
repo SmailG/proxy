@@ -204,17 +204,33 @@ func loadPlist(plistPath string) error {
 	domain := "gui/" + uid
 	target := domain + "/" + LaunchAgent
 
-	_ = exec.Command("launchctl", "bootout", target).Run()
-	return exec.Command("launchctl", "bootstrap", domain, plistPath).Run()
+	_ = runLaunchctl("bootout", target)
+	return runLaunchctl("bootstrap", domain, plistPath)
 }
 
 func unloadPlist(plistPath string) error {
 	uid := strconv.Itoa(os.Getuid())
 	target := "gui/" + uid + "/" + LaunchAgent
-	return exec.Command("launchctl", "bootout", target).Run()
+	return runLaunchctl("bootout", target)
 }
 
 func isPlistLoaded() bool {
-	err := exec.Command("launchctl", "list", LaunchAgent).Run()
-	return err == nil
+	return runLaunchctl("list", LaunchAgent) == nil
+}
+
+// runLaunchctl is the seam tests replace. The domain it targets is
+// gui/<uid>/<label>, which a test's temporary HOME does not redirect, so without
+// this seam a test that exercises Enable/DisableAutostart boots out the real
+// LaunchAgent: it SIGTERMs the developer's running proxy and, because
+// KeepAlive.SuccessfulExit is false, launchd leaves it stopped.
+//
+// The error is wrapped here because callers report it without naming the
+// operation they were performing, and "exit status 3" alone does not say whether
+// the bootstrap or the bootout failed. The arguments carry no secret: they are
+// the subcommand, the domain and the plist path.
+var runLaunchctl = func(args ...string) error {
+	if err := exec.Command("launchctl", args...).Run(); err != nil {
+		return fmt.Errorf("launchctl %s: %w", strings.Join(args, " "), err)
+	}
+	return nil
 }

@@ -13,6 +13,12 @@ import (
 	"github.com/routatic/proxy/internal/config"
 )
 
+// redactedSentinel replaces a secret in any config document leaving the server.
+// It is a contract, not a display string: mergeConfigPatch drops patch values
+// equal to it, so a client that echoes back what it was given cannot overwrite
+// a working key with the placeholder.
+const redactedSentinel = "***REDACTED***"
+
 var sensitiveFieldPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)api[_-]?key`),
 	regexp.MustCompile(`(?i)token`),
@@ -41,20 +47,43 @@ func anonymizeConfig(cfg *config.Config) *config.Config {
 	return result
 }
 
-// anonymizeMap redacts sensitive keys in m, descending into nested objects.
+// anonymizeMap redacts sensitive keys in m, descending into nested objects and
+// arrays at any depth.
 func anonymizeMap(m map[string]interface{}) {
 	for key, value := range m {
 		if shouldAnonymize(key) {
 			switch v := value.(type) {
 			case string:
 				if v != "" {
-					m[key] = "***REDACTED***"
+					m[key] = redactedSentinel
 				}
 			case []interface{}:
-				m[key] = []string{"***REDACTED***"}
+				m[key] = []string{redactedSentinel}
+			case map[string]interface{}:
+				// A sensitive key holding an object is a container of secrets
+				// rather than one value, so redact inside it and keep the shape:
+				// collapsing it to the placeholder string would not survive the
+				// typed round-trip anonymizeConfig does.
+				anonymizeMap(v)
 			}
-		} else if nested, ok := value.(map[string]interface{}); ok {
-			anonymizeMap(nested)
+		} else {
+			anonymizeValue(value)
+		}
+	}
+}
+
+// anonymizeValue descends through nested objects and arrays so a secret is
+// reached whatever shape the JSON takes. extra_body is arbitrary vendor JSON
+// preserved verbatim by the typed round-trip, so it can hold an object inside an
+// array and an array inside an array; stopping at the first level would serve
+// either in clear.
+func anonymizeValue(v interface{}) {
+	switch t := v.(type) {
+	case map[string]interface{}:
+		anonymizeMap(t)
+	case []interface{}:
+		for _, item := range t {
+			anonymizeValue(item)
 		}
 	}
 }

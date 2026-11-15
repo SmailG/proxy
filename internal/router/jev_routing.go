@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -68,7 +69,7 @@ func (r *ModelRouter) detectScenario(messages []MessageContent, tokenCount, tool
 	text := latestPromptText(messages)
 	if strings.TrimSpace(text) == "" {
 		if cfg.JevRouting.Mode == config.JevModeActive {
-			if res, ok := r.jevCached(messages, keyword); ok {
+			if res, ok := r.jevCached(cfg.JevRouting, messages, keyword); ok {
 				return res
 			}
 		}
@@ -125,11 +126,26 @@ func (r *ModelRouter) jevStreamingShadow(messages []MessageContent, tokenCount i
 }
 
 // jevActive lets Jev decide. It blocks the request for at most timeout_ms; any
-// failure returns the keyword result unchanged.
+// failure returns the keyword result unchanged, and so does an answer the model
+// was not confident enough to give.
 func (r *ModelRouter) jevActive(jcfg config.JevRoutingConfig, messages []MessageContent, keyword ScenarioResult, text string) ScenarioResult {
 	res, err := r.classify(jcfg, text)
 	if err != nil {
 		r.logJevFallback(jcfg.Mode, keyword, err)
+		return keyword
+	}
+	if res.Confidence < jcfg.MinConfidence {
+		// Neither cached nor left cached. A decision that was not acted on must not
+		// be reused by the tool-result turns that follow this one, and the cache may
+		// still hold a more confident answer for this same text from an earlier turn.
+		// Dropping it is what makes the abstention stick: jevCached re-checks the
+		// floor, but an older entry above it would pass and route on the old answer.
+		//
+		// This is the opposite of the abstention in jevCached, which keeps its entry.
+		// There the floor moved under an answer that was sound when it was given;
+		// here a fresh classification of the same text says it is not sound now.
+		r.jev.cache.delete(jevKey(text))
+		r.logJevAbstained(jcfg.Mode, keyword, res, jcfg.MinConfidence)
 		return keyword
 	}
 	r.jev.cache.put(jevKey(text), res)
@@ -141,13 +157,23 @@ func (r *ModelRouter) jevActive(jcfg config.JevRoutingConfig, messages []Message
 // jevCached serves a turn with no authored text (tool output only) from the
 // decision Jev made for the latest authored user message, so a task keeps its
 // model through a tool loop. Nothing is sent to Jev.
-func (r *ModelRouter) jevCached(messages []MessageContent, keyword ScenarioResult) (ScenarioResult, bool) {
+//
+// The entry is re-checked against the current floor rather than trusted: an
+// entry only passed the floor that was configured when it was cached, and
+// min_confidence is hot-reloadable while entries live for jevCacheTTL. Without
+// this a floor raised mid-session would not apply to the tool-result turns that
+// follow, which are most of an agentic loop.
+func (r *ModelRouter) jevCached(jcfg config.JevRoutingConfig, messages []MessageContent, keyword ScenarioResult) (ScenarioResult, bool) {
 	text := latestAuthoredText(messages)
 	if text == "" {
 		return ScenarioResult{}, false
 	}
 	res, ok := r.jev.cache.get(jevKey(text))
 	if !ok {
+		return ScenarioResult{}, false
+	}
+	if res.Confidence < jcfg.MinConfidence {
+		r.logJevAbstained(jcfg.Mode, keyword, res, jcfg.MinConfidence)
 		return ScenarioResult{}, false
 	}
 	scenario := jevScenarioForLevel(res.Level, hasToolBlocker(messages))
@@ -231,10 +257,40 @@ func (r *ModelRouter) logJevResult(mode string, keyword ScenarioResult, jev Scen
 		"mode", mode,
 		"keyword_scenario", keyword.Scenario,
 		"jev_level", res.Level,
+		"jev_argmax", res.Argmax,
 		"jev_scenario", jev,
+		"jev_confidence", res.Confidence,
+		"jev_probs", jevProbs(res.Probabilities),
 		"architecture_prob", res.ArchitectureProb,
 		"agree", keyword.Scenario == jev,
 		"latency_ms", res.Latency.Milliseconds(),
+		"input_tokens", res.InputTokens,
+		"jev_model", res.Model,
+	)
+}
+
+// jevProbs renders the level distribution as one compact field, so a low
+// confidence in the log can be read as the split that caused it.
+func jevProbs(p [jevLevels]float64) string {
+	parts := make([]string, len(p))
+	for level, v := range p {
+		parts[level] = strconv.FormatFloat(v, 'f', 2, 64)
+	}
+	return strings.Join(parts, "/")
+}
+
+// logJevAbstained records an active-mode answer that was not acted on because
+// the model was not sure enough of it. Unlike a failure this is one Info line
+// per request rather than a throttled warning: it is the configured behaviour,
+// and how often it happens is the signal for tuning min_confidence.
+func (r *ModelRouter) logJevAbstained(mode string, keyword ScenarioResult, res JevResult, floor float64) {
+	r.jev.log().Info("jev routing abstained: confidence below the floor, keyword scenario stands",
+		"mode", mode,
+		"keyword_scenario", keyword.Scenario,
+		"jev_level", res.Level,
+		"jev_confidence", res.Confidence,
+		"jev_probs", jevProbs(res.Probabilities),
+		"min_confidence", floor,
 	)
 }
 

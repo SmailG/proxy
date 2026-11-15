@@ -41,8 +41,12 @@ type JevRoutingConfig struct {
 	Mode      string `json:"mode"`
 	Model     string `json:"model"`
 	TimeoutMs int    `json:"timeout_ms"`
-	APIKeyEnv string `json:"api_key_env"`
-	BaseURL   string `json:"base_url"`
+	// MinConfidence is the floor on the classifier's own confidence for its
+	// answer to be acted on in active mode; below it the keyword result stands.
+	// 0, the default, disables the floor.
+	MinConfidence float64 `json:"min_confidence"`
+	APIKeyEnv     string  `json:"api_key_env"`
+	BaseURL       string  `json:"base_url"`
 }
 
 func applyJevDefaults(j *JevRoutingConfig) {
@@ -75,6 +79,9 @@ func validateJevRouting(j JevRoutingConfig) error {
 	}
 	if j.TimeoutMs < 1 || j.TimeoutMs > maxJevTimeoutMs {
 		return fmt.Errorf("jev_routing.timeout_ms must be between 1 and %d", maxJevTimeoutMs)
+	}
+	if j.MinConfidence < 0 || j.MinConfidence > 1 {
+		return fmt.Errorf("jev_routing.min_confidence must be between 0 and 1")
 	}
 	u, err := url.Parse(j.BaseURL)
 	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {

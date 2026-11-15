@@ -15,7 +15,8 @@
     "model": "jev-1.14.0",
     "timeout_ms": 800,
     "api_key_env": "TYPESAFE_AI_API_KEY",
-    "base_url": "https://api.typesafe.ai"
+    "base_url": "https://api.typesafe.ai",
+    "min_confidence": 0
   },
   "models": {
     "background": {

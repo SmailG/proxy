@@ -414,8 +414,12 @@ func (s *Server) handleProxyConfig(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		cfg := s.atomicCfg.Get()
-		writeJSON(w, cfg)
+		// The in-memory config has every ${VAR} already resolved, so serving it
+		// as-is hands the literal upstream keys to any local process and leaves
+		// them in the dashboard's DOM. Redact instead: the Settings tab diffs
+		// against this document and mergeConfigPatch drops the sentinel, so a
+		// secret the user did not edit round-trips as "unchanged".
+		writeJSON(w, anonymizeConfig(s.atomicCfg.Get()))
 
 	case http.MethodPost:
 		// Read and decode the body before taking the config lock: a client that
@@ -447,6 +451,13 @@ func (s *Server) handleProxyConfig(w http.ResponseWriter, r *http.Request) {
 		// replace (at any depth) and unknown keys survive the save.
 		data, err := mergeConfigPatch(path, patch)
 		if err != nil {
+			// The client echoed back a placeholder GET had hidden. That is a bad
+			// request, not a server fault, and saying so tells the user to type a
+			// replacement instead of leaving them with an opaque failure.
+			if errors.Is(err, errRedactedEcho) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			s.logInternal("merging config patch", err)
 			http.Error(w, "could not apply the config patch", http.StatusInternalServerError)
 			return

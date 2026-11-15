@@ -118,8 +118,9 @@ func TestJevRouting_ActiveFailsOpenToKeywordResult(t *testing.T) {
 		serve  func(http.ResponseWriter, *http.Request)
 		reason string
 	}{
-		{"http 429", status(429), "http status 429"},
-		{"http 500", status(500), "http status 500"},
+		{"http 429", status(429), "rate limited (http 429)"},
+		{"http 500", status(500), "upstream error (http 500)"},
+		{"http 401", status(401), "api key rejected (http 401)"},
 		{"malformed json", respondJSON(`{"answers":`), "malformed"},
 		{"score out of range", respondJSON(jevOKBody(5, 0.1)), "out of range"},
 	}
@@ -171,6 +172,180 @@ func TestJevRouting_ActiveWaitIsBoundedByTimeout(t *testing.T) {
 		t.Errorf("waited %v, want about the 60ms timeout", elapsed)
 	}
 	wantLog(t, logs, "keyword scenario stands", "deadline exceeded")
+}
+
+// --- active: the min_confidence floor ---------------------------------------
+
+// splitDistribution backs the level-0 score 0.7/0.2/0.1 in the tests below.
+var splitDistribution = [jevLevels]float64{0.7, 0.2, 0.1}
+
+// An answer the model was not sure enough of must be treated exactly like a
+// failure: the keyword scenario stands, and the tool-result turns that follow
+// must not find a decision in the cache to reuse.
+func TestJevRouting_ActiveAbstainsBelowConfidenceFloor(t *testing.T) {
+	stub := newJevStub(t, respondJSON(jevConfidentBody(0, 0.4, splitDistribution, 0.2)))
+	r, logs := newJevRouter(t, stub, config.JevModeActive, func(c *config.JevRoutingConfig) {
+		c.MinConfidence = 0.6
+	})
+	got := route(t, r, userMsg(negationText), 100, 0)
+	if got.Scenario != ScenarioComplex {
+		t.Errorf("scenario = %s, want the keyword result complex", got.Scenario)
+	}
+	wantLog(t, logs, "abstained", "mode=active", "jev_confidence=0.4", "min_confidence=0.6")
+	if _, ok := r.jev.cache.get(jevKey(negationText)); ok {
+		t.Error("an abstained answer was cached and would be reused by later turns")
+	}
+	if n := stub.hits.Load(); n != 1 {
+		t.Errorf("Jev requests = %d, want exactly 1", n)
+	}
+}
+
+// An abstention has to retire the entry the cache already holds for that text.
+// Without it a more confident answer from an earlier turn survives, passes the
+// floor in jevCached, and routes the tool-result turns behind the abstention —
+// so the abstention would apply to one turn only and not to the rest of the loop.
+func TestJevRouting_AbstentionRetiresTheOlderCachedDecision(t *testing.T) {
+	confident := jevConfidentBody(0, 0.9, [jevLevels]float64{0.9, 0.05, 0.05}, 0.2)
+	unconfident := jevConfidentBody(0, 0.4, splitDistribution, 0.2)
+	// The stub counts hits before serving, so the second request onwards answers
+	// below the floor. Counting avoids swapping the handler mid-test, which the
+	// race detector would see as an unsynchronised write.
+	var stub *jevStub
+	stub = newJevStub(t, func(w http.ResponseWriter, _ *http.Request) {
+		body := confident
+		if stub.hits.Load() > 1 {
+			body = unconfident
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	})
+	r, logs := newJevRouter(t, stub, config.JevModeActive, func(c *config.JevRoutingConfig) {
+		c.MinConfidence = 0.6
+	})
+
+	if got := route(t, r, userMsg(negationText), 100, 0); got.Scenario != ScenarioBackground {
+		t.Fatalf("confident turn: scenario = %s, want the level-0 result background", got.Scenario)
+	}
+	if _, ok := r.jev.cache.get(jevKey(negationText)); !ok {
+		t.Fatal("the acted-on answer was not cached, so the rest of the test proves nothing")
+	}
+
+	// The same authored text again, now below the floor.
+	if got := route(t, r, userMsg(negationText), 100, 0); got.Scenario != ScenarioComplex {
+		t.Fatalf("abstaining turn: scenario = %s, want the keyword result complex", got.Scenario)
+	}
+	if _, ok := r.jev.cache.get(jevKey(negationText)); ok {
+		t.Error("the abstention left the older 0.9 entry cached")
+	}
+
+	// A tool-result turn: no authored text, so it would read that older entry.
+	// Level 0 at 0.9 clears the 0.6 floor and would give background.
+	toolTurn := []MessageContent{
+		{Role: "user", Content: negationText, PromptText: negationText},
+		{Role: "user", Content: "refactor everything", PromptText: ""},
+	}
+	if got := route(t, r, toolTurn, 100, 0); got.Scenario != ScenarioComplex {
+		t.Errorf("tool-result turn: scenario = %s, want the keyword result complex", got.Scenario)
+	}
+	if n := stub.hits.Load(); n != 2 {
+		t.Errorf("Jev requests = %d, want 2: a tool-result turn sends nothing", n)
+	}
+	wantLog(t, logs, "abstained", "jev_confidence=0.4", "min_confidence=0.6")
+}
+
+// The floor is a minimum, so an answer at exactly min_confidence is acted on,
+// and 0 disables the gate whatever the confidence.
+func TestJevRouting_ActiveActsAtOrAboveConfidenceFloor(t *testing.T) {
+	cases := []struct {
+		name       string
+		confidence float64
+		floor      float64
+	}{
+		{"above the floor", 0.9, 0.6},
+		{"at the floor", 0.6, 0.6},
+		{"floor disabled", 0.05, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := newJevStub(t, respondJSON(jevConfidentBody(0, tc.confidence, splitDistribution, 0.2)))
+			r, logs := newJevRouter(t, stub, config.JevModeActive, func(c *config.JevRoutingConfig) {
+				c.MinConfidence = tc.floor
+			})
+			got := route(t, r, userMsg(negationText), 100, 0)
+			if got.Scenario != ScenarioBackground {
+				t.Errorf("scenario = %s, want the level-0 result background", got.Scenario)
+			}
+			wantLog(t, logs, "mode=active", "jev_scenario=background", "jev_level=0", "jev_argmax=0")
+			if _, ok := r.jev.cache.get(jevKey(negationText)); !ok {
+				t.Error("an acted-on answer was not cached for the tool-result turns")
+			}
+		})
+	}
+}
+
+// An entry only passed the floor in force when it was cached, and min_confidence
+// is hot-reloadable while entries live for jevCacheTTL. A floor raised
+// mid-session has to apply to the tool-result turns that follow, which are most
+// of an agentic loop, not just to the next authored message.
+func TestJevRouting_RaisedFloorAppliesToCachedDecisions(t *testing.T) {
+	stub := newJevStub(t, respondJSON(jevConfidentBody(0, 0.4, splitDistribution, 0.2)))
+	r, logs := newJevRouter(t, stub, config.JevModeActive)
+
+	// No floor: level 0 at confidence 0.4 is acted on and cached.
+	if got := route(t, r, userMsg(negationText), 100, 0); got.Scenario != ScenarioBackground {
+		t.Fatalf("authored turn: scenario = %s, want the level-0 result background", got.Scenario)
+	}
+	if _, ok := r.jev.cache.get(jevKey(negationText)); !ok {
+		t.Fatal("the acted-on answer was not cached, so the rest of the test proves nothing")
+	}
+
+	// A tool-result turn: the latest user message carries tool output and no
+	// authored text, so jevCached looks the earlier message up by hash.
+	toolTurn := []MessageContent{
+		{Role: "user", Content: negationText, PromptText: negationText},
+		{Role: "user", Content: "refactor everything", PromptText: ""},
+	}
+
+	// Control: with the floor still at 0 the cached decision is reused, and the
+	// keyword result (complex) is overridden by level 0 (background).
+	if got := route(t, r, toolTurn, 100, 0); got.Scenario != ScenarioBackground {
+		t.Fatalf("floor 0: scenario = %s, want the cached background decision reused", got.Scenario)
+	}
+
+	next := *r.atomic.Get()
+	next.JevRouting.MinConfidence = 0.6
+	r.atomic = newTestAtomicConfig(&next)
+
+	got := route(t, r, toolTurn, 100, 0)
+	if got.Scenario != ScenarioComplex {
+		t.Errorf("raised floor: scenario = %s, want the keyword result complex", got.Scenario)
+	}
+	if strings.Contains(got.Reason, "reused for tool-result turn") {
+		t.Errorf("a decision below the raised floor was still reused: %s", got.Reason)
+	}
+	wantLog(t, logs, "abstained", "jev_confidence=0.4", "min_confidence=0.6")
+	if n := stub.hits.Load(); n != 1 {
+		t.Errorf("Jev requests = %d, want 1: a cached turn must send nothing", n)
+	}
+}
+
+// Shadow mode only reports: it routes by keyword whatever the confidence, and a
+// floor set for active mode must not turn its log line into an abstention.
+func TestJevRouting_ShadowReportsConfidenceButNeverAbstains(t *testing.T) {
+	stub := newJevStub(t, respondJSON(jevConfidentBody(2, 0.4, [jevLevels]float64{0.1, 0.2, 0.7}, 0.2)))
+	r, logs := newJevRouter(t, stub, config.JevModeShadow, func(c *config.JevRoutingConfig) {
+		c.MinConfidence = 0.9
+	})
+	got := route(t, r, userMsg("Hello"), 100, 0)
+	r.jev.wg.Wait()
+	if got.Scenario != ScenarioDefault {
+		t.Errorf("scenario = %s, want the keyword result default", got.Scenario)
+	}
+	wantLog(t, logs, "mode=shadow", "jev_confidence=0.4", "jev_argmax=2", "jev_probs=0.10/0.20/0.70",
+		"input_tokens=332", "jev_model=jev-1.14.0")
+	if strings.Contains(logs.String(), "abstained") {
+		t.Error("shadow mode reported an abstention")
+	}
 }
 
 // --- streaming --------------------------------------------------------------

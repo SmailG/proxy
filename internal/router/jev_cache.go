@@ -72,6 +72,14 @@ func (c *jevDecisionCache) put(k jevCacheKey, res JevResult) {
 	c.m[k] = jevCacheEntry{res: res, at: now}
 }
 
+// delete drops the entry for k. Deleting from a nil map is a no-op, so the zero
+// value needs no guard.
+func (c *jevDecisionCache) delete(k jevCacheKey) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.m, k)
+}
+
 // evictLocked drops expired entries and, if the map is still full, the oldest one.
 func (c *jevDecisionCache) evictLocked(now time.Time) {
 	var oldestKey jevCacheKey

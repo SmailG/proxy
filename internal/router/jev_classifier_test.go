@@ -62,6 +62,16 @@ func jevOKBody(score, noul float64) string {
 		"usage":{"input_tokens":10,"output_tokens":4}}`, score, noul)
 }
 
+// jevConfidentBody builds a 200 response whose Score answer carries an explicit
+// confidence and level distribution, for tests of the min_confidence gate.
+func jevConfidentBody(score, confidence float64, probs [jevLevels]float64, noul float64) string {
+	return fmt.Sprintf(`{"model":"jev-1.14.0","answers":{
+		"action":{"type":"score","score":%v,"confidence":%v,"probabilities":{"0":%v,"1":%v,"2":%v}},
+		"architecture":{"type":"noul","noul":%v}},
+		"usage":{"input_tokens":332,"output_tokens":4}}`,
+		score, confidence, probs[0], probs[1], probs[2], noul)
+}
+
 func respondJSON(body string) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -242,9 +252,18 @@ func TestJevClassifier_Failures(t *testing.T) {
 		serve   func(http.ResponseWriter, *http.Request)
 		wantErr string
 	}{
-		{"http 429", status(429), "429"},
-		{"http 500", status(500), "500"},
-		{"http 401", status(401), "401"},
+		{"http 401 names the key", status(401), "api key rejected (http 401)"},
+		{"http 403 names the key", status(403), "api key rejected (http 403)"},
+		{"http 404 names the endpoint", status(404), "endpoint not found (http 404)"},
+		{"http 400 names our question", status(400), "request rejected (http 400)"},
+		{"http 413 names our question", status(413), "request rejected (http 413)"},
+		{"http 415 names our question", status(415), "request rejected (http 415)"},
+		{"http 422 names our question", status(422), "request rejected (http 422)"},
+		{"http 429 names our traffic", status(429), "rate limited (http 429)"},
+		{"http 529 names their capacity", status(529), "upstream overloaded (http 529)"},
+		{"http 500", status(500), "upstream error (http 500)"},
+		{"http 503", status(503), "upstream error (http 503)"},
+		{"http 418 is unexpected", status(418), "unexpected status (http 418)"},
 		{"malformed json", respondJSON(`{"answers":`), "malformed"},
 		{"not json at all", respondJSON(`<html>`), "malformed"},
 		{"no answers", respondJSON(`{"answers":{}}`), "missing"},
@@ -379,19 +398,192 @@ func TestJevClassifier_TransportFailureClasses(t *testing.T) {
 // values that reach it by any other path.
 func TestParseJevResponse_RejectsNaN(t *testing.T) {
 	nan, one := math.NaN(), 1.0
-	body := func(score, noul *float64) jevResponseBody {
+	probs := map[string]float64{"0": 0.2, "1": 0.3, "2": 0.5}
+	body := func(score, confidence, noul *float64, p map[string]float64) jevResponseBody {
 		return jevResponseBody{Answers: map[string]jevAnswer{
-			jevActionID:       {Type: "score", Score: score},
+			jevActionID:       {Type: "score", Score: score, Confidence: confidence, Probabilities: p},
 			jevArchitectureID: {Type: "noul", Noul: noul},
 		}}
 	}
-	if _, err := parseJevResponse(body(&nan, &one)); err == nil {
+	if _, err := parseJevResponse(body(&nan, &one, &one, probs)); err == nil {
 		t.Error("NaN score was accepted")
 	}
-	if _, err := parseJevResponse(body(&one, &nan)); err == nil {
+	if _, err := parseJevResponse(body(&one, &one, &nan, probs)); err == nil {
 		t.Error("NaN noul was accepted")
 	}
-	if _, err := parseJevResponse(body(&one, &one)); err != nil {
+	if _, err := parseJevResponse(body(&one, &nan, &one, probs)); err == nil {
+		t.Error("NaN confidence was accepted")
+	}
+	if _, err := parseJevResponse(body(&one, &one, &one, map[string]float64{"0": nan, "1": 0.5, "2": 0.5})); err == nil {
+		t.Error("NaN probability was accepted")
+	}
+	if _, err := parseJevResponse(body(&one, &one, &one, probs)); err != nil {
 		t.Errorf("control: finite values rejected: %v", err)
 	}
 }
+
+// A Score answer carries the whole distribution, and a partial one must not
+// steer routing: neither the argmax nor a confidence floor would mean what the
+// docs promise on a distribution that does not add up.
+func TestParseJevResponse_RejectsPartialProbabilities(t *testing.T) {
+	one := 1.0
+	body := func(p map[string]float64) jevResponseBody {
+		return jevResponseBody{Answers: map[string]jevAnswer{
+			jevActionID:       {Type: "score", Score: &one, Confidence: &one, Probabilities: p},
+			jevArchitectureID: {Type: "noul", Noul: &one},
+		}}
+	}
+	cases := []struct {
+		name string
+		p    map[string]float64
+	}{
+		{"absent", nil},
+		{"missing a level", map[string]float64{"0": 0.5, "1": 0.5}},
+		{"an unknown extra level", map[string]float64{"0": 0.5, "1": 0.5, "2": 0.0, "3": 0.0}},
+		{"keyed by name", map[string]float64{"low": 0.5, "mid": 0.5, "high": 0.0}},
+		{"sums to 0.5", map[string]float64{"0": 0.2, "1": 0.2, "2": 0.1}},
+		{"sums to 1.5", map[string]float64{"0": 0.5, "1": 0.5, "2": 0.5}},
+		{"one probability over 1", map[string]float64{"0": 1.2, "1": -0.1, "2": -0.1}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := parseJevResponse(body(tc.p)); err == nil {
+				t.Error("accepted")
+			}
+		})
+	}
+	// Rounding the reported probabilities to two decimals can leave the sum a
+	// hair off 1; that is not a reason to discard the answer.
+	if _, err := parseJevResponse(body(map[string]float64{"0": 0.33, "1": 0.33, "2": 0.33})); err != nil {
+		t.Errorf("three equal probabilities rejected: %v", err)
+	}
+}
+
+// This one has to go through the decoder: null landing in a float64 as a silent
+// zero is the whole bug, so a struct built by hand cannot reproduce it. A reply
+// of {"0":1,"1":null,"2":null} has three levels, every value in range and a sum
+// of exactly 1 — every check parseLevelProbabilities makes passes, and with a
+// score of 0 it would route to background on a malformed answer.
+func TestJevProbabilities_RejectsNullThroughTheDecoder(t *testing.T) {
+	decode := func(t *testing.T, probabilities string) (jevProbabilities, error) {
+		t.Helper()
+		body := []byte(`{"model":"jev-1.14.0","answers":{` +
+			`"` + jevActionID + `":{"type":"score","score":0,"confidence":0.9,"probabilities":` + probabilities + `},` +
+			`"` + jevArchitectureID + `":{"type":"noul","noul":0.1}}}`)
+		var parsed jevResponseBody
+		err := json.Unmarshal(body, &parsed)
+		return parsed.Answers[jevActionID].Probabilities, err
+	}
+
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{"two nulls behind a real level", `{"0":1,"1":null,"2":null}`},
+		{"all null", `{"0":null,"1":null,"2":null}`},
+		{"one null", `{"0":0.5,"1":null,"2":0.5}`},
+		{"a string instead of a number", `{"0":"1","1":0,"2":0}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := decode(t, tc.in); err == nil {
+				t.Error("accepted a malformed distribution")
+			} else if strings.Contains(err.Error(), tc.in) {
+				t.Errorf("error quotes the response body: %v", err)
+			}
+		})
+	}
+
+	// Zero is a legitimate probability and must stay distinguishable from null,
+	// or the fix would reject honest answers that put nothing on two levels.
+	got, err := decode(t, `{"0":1,"1":0,"2":0}`)
+	if err != nil {
+		t.Fatalf("control: an explicit zero distribution was rejected: %v", err)
+	}
+	if got["1"] != 0 || got["2"] != 0 || got["0"] != 1 {
+		t.Errorf("probabilities = %v, want map[0:1 1:0 2:0]", got)
+	}
+	if _, err := parseJevResponse(jevResponseBody{Answers: map[string]jevAnswer{
+		jevActionID:       {Type: "score", Score: ptr(0), Confidence: ptr(0.9), Probabilities: got},
+		jevArchitectureID: {Type: "noul", Noul: ptr(0.1)},
+	}}); err != nil {
+		t.Errorf("control: parseJevResponse rejected the decoded distribution: %v", err)
+	}
+}
+
+// Confidence, the distribution and the peak level are what tell a clear answer
+// from a coin flip, so all of them have to survive parsing, along with the
+// model id and the token count the call cost.
+func TestParseJevResponse_KeepsConfidenceAndDistribution(t *testing.T) {
+	body := jevResponseBody{
+		Model: "jev-1.14.0",
+		Answers: map[string]jevAnswer{
+			jevActionID: {
+				Type: "score", Score: ptr(1.43), Confidence: ptr(0.35),
+				Probabilities: map[string]float64{"0": 0.0, "1": 0.57, "2": 0.43},
+			},
+			jevArchitectureID: {Type: "noul", Noul: ptr(0.2)},
+		},
+		Usage: &jevUsage{InputTokens: 332},
+	}
+	res, err := parseJevResponse(body)
+	if err != nil {
+		t.Fatalf("parseJevResponse: %v", err)
+	}
+	if res.Confidence != 0.35 {
+		t.Errorf("Confidence = %v, want 0.35", res.Confidence)
+	}
+	if res.Probabilities != [jevLevels]float64{0.0, 0.57, 0.43} {
+		t.Errorf("Probabilities = %v", res.Probabilities)
+	}
+	if res.Argmax != 1 {
+		t.Errorf("Argmax = %d, want 1", res.Argmax)
+	}
+	if res.Level != 1 { // round(1.43)
+		t.Errorf("Level = %d, want 1", res.Level)
+	}
+	if res.InputTokens != 332 {
+		t.Errorf("InputTokens = %d, want 332", res.InputTokens)
+	}
+	if res.Model != "jev-1.14.0" {
+		t.Errorf("Model = %q, want jev-1.14.0", res.Model)
+	}
+}
+
+// The rounded score and the peak of the distribution disagree exactly when the
+// probability is split, which is the case the confidence floor exists for.
+func TestParseJevResponse_RoundedScoreVersusArgmax(t *testing.T) {
+	cases := []struct {
+		name       string
+		probs      map[string]float64
+		score      float64
+		level      int
+		argmax     int
+		confidence float64
+	}{
+		{"clear level 2", map[string]float64{"0": 0.0, "1": 0.1, "2": 0.9}, 1.9, 2, 2, 0.8},
+		{"split 0 and 2 hedges to 1", map[string]float64{"0": 0.5, "1": 0.0, "2": 0.5}, 1.0, 1, 0, 0.0},
+		{"minority peak beats the mean", map[string]float64{"0": 0.4, "1": 0.35, "2": 0.25}, 0.85, 1, 0, 0.05},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := parseJevResponse(jevResponseBody{Answers: map[string]jevAnswer{
+				jevActionID: {
+					Type: "score", Score: ptr(tc.score), Confidence: ptr(tc.confidence), Probabilities: tc.probs,
+				},
+				jevArchitectureID: {Type: "noul", Noul: ptr(0.1)},
+			}})
+			if err != nil {
+				t.Fatalf("parseJevResponse: %v", err)
+			}
+			if res.Level != tc.level {
+				t.Errorf("Level = %d, want %d", res.Level, tc.level)
+			}
+			if res.Argmax != tc.argmax {
+				t.Errorf("Argmax = %d, want %d", res.Argmax, tc.argmax)
+			}
+		})
+	}
+}
+
+func ptr(v float64) *float64 { return &v }

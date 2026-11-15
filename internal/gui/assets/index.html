@@ -666,6 +666,16 @@
             <span class="toggle-slider"></span>
           </label>
         </div>
+        <div class="mb-2">
+          <label for="cfg-jev-preset" class="block text-[11px] font-medium text-[#98989d] mb-0.5" data-i18n="jev.preset">Classifier</label>
+          <select id="cfg-jev-preset" class="w-full px-2 py-1.5 text-xs border border-[#48484a] rounded bg-[#3a3a3c] text-[#f5f5f7] outline-none focus:border-[#6366f1]" onchange="applyJevPreset(this.value)">
+            <option value="jev-1.14.0">Jev 1.14 — TypeSafe</option>
+            <option value="jev-1.13.0">Jev 1.13 — TypeSafe</option>
+            <option value="decision-model-preview">Decision model — Alibaba Model Studio</option>
+            <option value="custom">Custom</option>
+          </select>
+          <div class="field-hint" data-i18n="jev.presetHint">Fills Model, Base URL, API Key Env Var and Timeout below; every field stays editable. All three speak the same System One protocol, so the proxy sends an identical request either way.</div>
+        </div>
         <div class="flex gap-2.5">
           <div class="flex-1 mb-2">
             <label for="cfg-jev-mode" class="block text-[11px] font-medium text-[#98989d] mb-0.5" data-i18n="jev.mode">Mode</label>
@@ -681,12 +691,19 @@
         </div>
         <div class="field-hint mb-2" data-i18n="jev.modeHint">shadow logs Jev's choice beside the keyword scenario and changes nothing; active lets Jev decide and can add up to timeout_ms to a request.</div>
         <div class="mb-2">
+          <label for="cfg-jev-min-confidence" class="block text-[11px] font-medium text-[#98989d] mb-0.5" data-i18n="jev.minConfidence">Min Confidence (active)</label>
+          <input type="number" id="cfg-jev-min-confidence" min="0" max="1" step="0.05" placeholder="0" class="w-full px-2 py-1.5 text-xs border border-[#48484a] rounded bg-[#3a3a3c] text-[#f5f5f7] outline-none focus:border-[#6366f1]">
+          <div class="field-hint" data-i18n="jev.minConfidenceHint">In active mode an answer below this confidence is dropped and the keyword scenario stands, and it is not cached, so the tool-result turns behind it do not inherit a decision that was never acted on. 0 turns the check off; shadow mode logs the confidence but never abstains. The floor is per-provider tuning, not a constant: calibration is measured across a population of answers, so where it starts paying off depends on that endpoint's own right/wrong split.</div>
+          <div class="field-hint" id="cfg-jev-min-confidence-hint"></div>
+        </div>
+        <div class="mb-2">
           <label for="cfg-jev-model" class="block text-[11px] font-medium text-[#98989d] mb-0.5" data-i18n="jev.model">Model</label>
           <input type="text" id="cfg-jev-model" placeholder="jev-1.14.0" class="w-full px-2 py-1.5 text-xs border border-[#48484a] rounded bg-[#3a3a3c] text-[#f5f5f7] outline-none focus:border-[#6366f1]">
         </div>
         <div class="mb-2">
           <label for="cfg-jev-base-url" class="block text-[11px] font-medium text-[#98989d] mb-0.5" data-i18n="jev.baseUrl">Base URL</label>
           <input type="text" id="cfg-jev-base-url" placeholder="https://api.typesafe.ai" class="w-full px-2 py-1.5 text-xs border border-[#48484a] rounded bg-[#3a3a3c] text-[#f5f5f7] outline-none focus:border-[#6366f1]">
+          <div class="field-hint" id="cfg-jev-base-url-hint"></div>
         </div>
         <div class="mb-0">
           <label for="cfg-jev-api-key-env" class="block text-[11px] font-medium text-[#98989d] mb-0.5" data-i18n="jev.apiKeyEnv">API Key Env Var</label>

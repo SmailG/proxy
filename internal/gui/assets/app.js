@@ -114,6 +114,7 @@ const TRANSLATIONS = {
     'field.baseUrl': 'Base URL',
     'field.anthropicBaseUrl': 'Anthropic Base URL',
     'field.apiKey': 'API Key',
+    'field.redacted': 'configured — type to replace',
     'field.timeout': 'Timeout (ms)',
     'field.streamTimeout': 'Stream Timeout (ms)',
     'field.streamingTimeout': 'Streaming Timeout (ms)',
@@ -298,6 +299,7 @@ const TRANSLATIONS = {
     'field.baseUrl': 'Base URL',
     'field.anthropicBaseUrl': 'Anthropic Base URL',
     'field.apiKey': 'API Key',
+    'field.redacted': '已配置 — 输入以替换',
     'field.timeout': '超时（毫秒）',
     'field.streamTimeout': '流超时（毫秒）',
     'field.streamingTimeout': '流式超时（毫秒）',
@@ -817,6 +819,10 @@ function fmtAge(seconds) {
 /* ── Proxy Config Form ─────────────────────────────────────────── */
 let currentProxyConfig = null;
 
+// REDACTED is the placeholder the server substitutes for every secret in
+// GET /api/proxy/config. It must match redactedSentinel in internal/gui.
+const REDACTED = '***REDACTED***';
+
 // Map of config field paths to element IDs for loading and saving.
 // Each entry: [jsonPath, elementId, type, transform]
 const CONFIG_FIELDS = [
@@ -1034,6 +1040,10 @@ function readFieldValue(field) {
     return v === current ? undefined : v;
   }
   // string
+  // An untouched redacted secret is not a change: GET hid the real value, so
+  // posting the empty field back would erase the key on disk. Typing anything
+  // is the only way to replace a key from here.
+  if (el.dataset.redacted === '1' && raw === '') return undefined;
   const v = raw;
   const current = deepGet(currentProxyConfig, field[0]);
   return v === (current || '') ? undefined : v;
@@ -1054,8 +1064,21 @@ async function loadProxyConfig() {
         el.checked = !!val;
       } else if (type === 'int' || type === 'float') {
         el.value = val != null ? val : '';
+      } else if (val === REDACTED) {
+        // The server never returns a secret. Blank the field, say a key is
+        // configured, and mark it: readFieldValue must treat an untouched
+        // redacted field as no change, or saving would write "" over the key.
+        if (el.dataset.origPlaceholder === undefined) el.dataset.origPlaceholder = el.placeholder;
+        el.value = '';
+        el.dataset.redacted = '1';
+        el.placeholder = t('field.redacted');
       } else {
         el.value = val || '';
+        delete el.dataset.redacted;
+        if (el.dataset.origPlaceholder !== undefined) {
+          el.placeholder = el.dataset.origPlaceholder;
+          delete el.dataset.origPlaceholder;
+        }
       }
     }
     syncJevPreset();

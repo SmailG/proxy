@@ -13,6 +13,12 @@ import (
 	"github.com/routatic/proxy/internal/config"
 )
 
+// redactedSentinel replaces a secret in any config document leaving the server.
+// It is a contract, not a display string: mergeConfigPatch drops patch values
+// equal to it, so a client that echoes back what it was given cannot overwrite
+// a working key with the placeholder.
+const redactedSentinel = "***REDACTED***"
+
 var sensitiveFieldPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)api[_-]?key`),
 	regexp.MustCompile(`(?i)token`),
@@ -48,10 +54,10 @@ func anonymizeMap(m map[string]interface{}) {
 			switch v := value.(type) {
 			case string:
 				if v != "" {
-					m[key] = "***REDACTED***"
+					m[key] = redactedSentinel
 				}
 			case []interface{}:
-				m[key] = []string{"***REDACTED***"}
+				m[key] = []string{redactedSentinel}
 			}
 		} else if nested, ok := value.(map[string]interface{}); ok {
 			anonymizeMap(nested)

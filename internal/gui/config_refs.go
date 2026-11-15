@@ -28,6 +28,10 @@ func decodeJSONMap(data []byte, dst *map[string]any) error {
 // literal. Working on the raw map preserves references, keys this build does not
 // know about, and the exact number encoding for everything the patch does not
 // touch.
+//
+// Values equal to redactedSentinel are dropped rather than merged: GET hides
+// secrets behind that placeholder, so a client that posts back what it was given
+// must leave the real key alone instead of replacing it.
 func mergeConfigPatch(path string, patch map[string]any) ([]byte, error) {
 	rawFile, err := os.ReadFile(path)
 	if err != nil {
@@ -37,12 +41,46 @@ func mergeConfigPatch(path string, patch map[string]any) ([]byte, error) {
 	if err := decodeJSONMap(rawFile, &raw); err != nil {
 		return nil, fmt.Errorf("parsing config %s: %w", path, err)
 	}
+	stripRedacted(patch)
 	mergeJSONMap(raw, patch)
 	out, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("encoding merged config: %w", err)
 	}
 	return out, nil
+}
+
+// stripRedacted deletes redaction placeholders from patch at any depth. A list
+// is dropped only when every element is the placeholder, which is the shape
+// anonymizeMap produces for an api_keys array; a partly-edited list is a real
+// value and must survive.
+func stripRedacted(m map[string]any) {
+	for k, v := range m {
+		switch t := v.(type) {
+		case string:
+			if t == redactedSentinel {
+				delete(m, k)
+			}
+		case map[string]any:
+			stripRedacted(t)
+		case []any:
+			if allRedacted(t) {
+				delete(m, k)
+			}
+		}
+	}
+}
+
+func allRedacted(list []any) bool {
+	if len(list) == 0 {
+		return false
+	}
+	for _, v := range list {
+		if s, ok := v.(string); !ok || s != redactedSentinel {
+			return false
+		}
+	}
+	return true
 }
 
 // mergeJSONMap merges src into dst: objects merge key by key, anything else

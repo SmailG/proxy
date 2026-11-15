@@ -1118,7 +1118,14 @@ async function saveProxyConfig() {
   // number is written to disk and only surfaces on the save that turns Jev on.
   for (const field of CONFIG_FIELDS) {
     const el = document.getElementById(field[1]);
-    if (!el || el.value === '') continue;
+    if (!el) continue;
+    // Validity is checked before any empty test on purpose. A number input
+    // mid-entry ("1e") reports value === '' with validity.badInput set, so
+    // skipping empty values first drops that edit silently: the save reports
+    // success and the reload shows the previous value. A genuinely empty
+    // optional input has no validity flag set, so it still passes here and
+    // readFieldValue omits it from the patch. None of CONFIG_FIELDS is required,
+    // so valueMissing cannot fire on a blanked redacted secret either.
     if (hasBlockingValidityError(el)) {
       const label = document.querySelector('label[for="' + field[1] + '"]');
       showSaveStatus('Invalid value for ' + (label ? label.textContent.trim() : field[0]), 'error');

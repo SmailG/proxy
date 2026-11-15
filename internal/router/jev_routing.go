@@ -135,8 +135,16 @@ func (r *ModelRouter) jevActive(jcfg config.JevRoutingConfig, messages []Message
 		return keyword
 	}
 	if res.Confidence < jcfg.MinConfidence {
-		// Deliberately not cached: a decision that was not acted on must not be
-		// reused by the tool-result turns that follow this one.
+		// Neither cached nor left cached. A decision that was not acted on must not
+		// be reused by the tool-result turns that follow this one, and the cache may
+		// still hold a more confident answer for this same text from an earlier turn.
+		// Dropping it is what makes the abstention stick: jevCached re-checks the
+		// floor, but an older entry above it would pass and route on the old answer.
+		//
+		// This is the opposite of the abstention in jevCached, which keeps its entry.
+		// There the floor moved under an answer that was sound when it was given;
+		// here a fresh classification of the same text says it is not sound now.
+		r.jev.cache.delete(jevKey(text))
 		r.logJevAbstained(jcfg.Mode, keyword, res, jcfg.MinConfidence)
 		return keyword
 	}

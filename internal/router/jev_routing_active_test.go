@@ -200,6 +200,59 @@ func TestJevRouting_ActiveAbstainsBelowConfidenceFloor(t *testing.T) {
 	}
 }
 
+// An abstention has to retire the entry the cache already holds for that text.
+// Without it a more confident answer from an earlier turn survives, passes the
+// floor in jevCached, and routes the tool-result turns behind the abstention —
+// so the abstention would apply to one turn only and not to the rest of the loop.
+func TestJevRouting_AbstentionRetiresTheOlderCachedDecision(t *testing.T) {
+	confident := jevConfidentBody(0, 0.9, [jevLevels]float64{0.9, 0.05, 0.05}, 0.2)
+	unconfident := jevConfidentBody(0, 0.4, splitDistribution, 0.2)
+	// The stub counts hits before serving, so the second request onwards answers
+	// below the floor. Counting avoids swapping the handler mid-test, which the
+	// race detector would see as an unsynchronised write.
+	var stub *jevStub
+	stub = newJevStub(t, func(w http.ResponseWriter, _ *http.Request) {
+		body := confident
+		if stub.hits.Load() > 1 {
+			body = unconfident
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	})
+	r, logs := newJevRouter(t, stub, config.JevModeActive, func(c *config.JevRoutingConfig) {
+		c.MinConfidence = 0.6
+	})
+
+	if got := route(t, r, userMsg(negationText), 100, 0); got.Scenario != ScenarioBackground {
+		t.Fatalf("confident turn: scenario = %s, want the level-0 result background", got.Scenario)
+	}
+	if _, ok := r.jev.cache.get(jevKey(negationText)); !ok {
+		t.Fatal("the acted-on answer was not cached, so the rest of the test proves nothing")
+	}
+
+	// The same authored text again, now below the floor.
+	if got := route(t, r, userMsg(negationText), 100, 0); got.Scenario != ScenarioComplex {
+		t.Fatalf("abstaining turn: scenario = %s, want the keyword result complex", got.Scenario)
+	}
+	if _, ok := r.jev.cache.get(jevKey(negationText)); ok {
+		t.Error("the abstention left the older 0.9 entry cached")
+	}
+
+	// A tool-result turn: no authored text, so it would read that older entry.
+	// Level 0 at 0.9 clears the 0.6 floor and would give background.
+	toolTurn := []MessageContent{
+		{Role: "user", Content: negationText, PromptText: negationText},
+		{Role: "user", Content: "refactor everything", PromptText: ""},
+	}
+	if got := route(t, r, toolTurn, 100, 0); got.Scenario != ScenarioComplex {
+		t.Errorf("tool-result turn: scenario = %s, want the keyword result complex", got.Scenario)
+	}
+	if n := stub.hits.Load(); n != 2 {
+		t.Errorf("Jev requests = %d, want 2: a tool-result turn sends nothing", n)
+	}
+	wantLog(t, logs, "abstained", "jev_confidence=0.4", "min_confidence=0.6")
+}
+
 // The floor is a minimum, so an answer at exactly min_confidence is acted on,
 // and 0 disables the gate whatever the confidence.
 func TestJevRouting_ActiveActsAtOrAboveConfidenceFloor(t *testing.T) {

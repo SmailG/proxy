@@ -34,11 +34,10 @@ func decodeJSONMap(data []byte, dst *map[string]any) error {
 // secrets behind that placeholder, so a client that posts back what it was given
 // must leave the real key alone instead of replacing it. Where a placeholder
 // cannot be dropped safely, stripRedacted returns errRedactedEcho and nothing is
-// written.
+// written. fallbacks runs through reconcileFallbacks first, because an array is
+// replaced wholesale and is the one place a placeholder can be restored from the
+// stored document rather than dropped.
 func mergeConfigPatch(path string, patch map[string]any) ([]byte, error) {
-	if err := stripRedacted(patch); err != nil {
-		return nil, err
-	}
 	rawFile, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading config %s: %w", path, err)
@@ -46,6 +45,12 @@ func mergeConfigPatch(path string, patch map[string]any) ([]byte, error) {
 	var raw map[string]any
 	if err := decodeJSONMap(rawFile, &raw); err != nil {
 		return nil, fmt.Errorf("parsing config %s: %w", path, err)
+	}
+	if err := reconcileFallbacks(raw, patch); err != nil {
+		return nil, err
+	}
+	if err := stripRedacted(patch); err != nil {
+		return nil, err
 	}
 	mergeJSONMap(raw, patch)
 	out, err := json.MarshalIndent(raw, "", "  ")
@@ -66,6 +71,8 @@ var errRedactedEcho = errors.New("hidden value cannot be saved as-is; type a new
 // wholesale by mergeJSONMap, so dropping a placeholder inside one would lose the
 // stored secret, and a placeholder sitting beside real values in a list cannot be
 // told apart from an intentional key. Those shapes return errRedactedEcho.
+// reconcileFallbacks runs first and restores the placeholders in a fallbacks
+// patch, so the lists refused here are the ones with nothing to restore from.
 func stripRedacted(m map[string]any) error {
 	for k, v := range m {
 		switch t := v.(type) {
@@ -121,6 +128,134 @@ func containsRedacted(v any) bool {
 		}
 	}
 	return false
+}
+
+// fallbackIdentity keys a chain entry for the restore below. The Fallback tab
+// filters models already in the chain out of its add list, so provider and
+// model_id together are unique within one chain; a hand-edited file could still
+// repeat the pair, so callers match the nth occurrence rather than the first.
+func fallbackIdentity(entry map[string]any) string {
+	provider, _ := entry["provider"].(string)
+	modelID, _ := entry["model_id"].(string)
+	return provider + "\x00" + modelID
+}
+
+// nthFallbackEntry returns the nth entry of chain carrying identity, or nil.
+func nthFallbackEntry(chain []any, identity string, n int) map[string]any {
+	for _, item := range chain {
+		entry, ok := item.(map[string]any)
+		if !ok || fallbackIdentity(entry) != identity {
+			continue
+		}
+		if n == 0 {
+			return entry
+		}
+		n--
+	}
+	return nil
+}
+
+// reconcileFallbacks restores what GET hid in a fallbacks patch, in place.
+//
+// fallbacks is the one place the redaction contract cannot be honoured by
+// dropping a key: mergeJSONMap replaces arrays wholesale, so an entry posted
+// without its secret erases that secret on disk. The Fallback tab shallow-copies
+// every chain it was served and posts all of them back on any save, so once one
+// chain holds a redacted secret the whole POST would be refused — including an
+// edit to an unrelated scenario, which is most saves.
+//
+// Each patched entry is therefore matched to the stored chain by identity, and
+// every placeholder in it is replaced by the stored value at the same path. The
+// array is still replaced wholesale afterwards, so adding, removing and
+// reordering entries all keep working.
+//
+// A placeholder with no stored counterpart is refused rather than guessed at:
+// matching by position across an editor that adds and removes entries could
+// graft one model's key onto another.
+func reconcileFallbacks(raw, patch map[string]any) error {
+	patchFallbacks, ok := patch["fallbacks"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	storedFallbacks, _ := raw["fallbacks"].(map[string]any)
+	for scenario, patchValue := range patchFallbacks {
+		patchChain, ok := patchValue.([]any)
+		if !ok {
+			continue
+		}
+		storedChain, _ := storedFallbacks[scenario].([]any)
+		seen := make(map[string]int, len(patchChain))
+		for _, item := range patchChain {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			identity := fallbackIdentity(entry)
+			occurrence := seen[identity]
+			seen[identity]++
+			if !containsRedacted(entry) {
+				continue
+			}
+			modelID, _ := entry["model_id"].(string)
+			where := fmt.Sprintf("fallbacks.%s[%s]", scenario, modelID)
+			stored := nthFallbackEntry(storedChain, identity, occurrence)
+			if stored == nil {
+				return fmt.Errorf("%s: %w", where, errRedactedEcho)
+			}
+			if _, err := restoreRedacted(entry, stored, true); err != nil {
+				return fmt.Errorf("%s: %w", where, err)
+			}
+		}
+	}
+	return nil
+}
+
+// restoreRedacted returns dst with every placeholder replaced by the value at the
+// same path in src. srcOK reports whether src was present at all, which is what
+// distinguishes a stored null from a missing key: only the latter is an error,
+// since there is then nothing to restore.
+//
+// Lists are matched by position. That is safe here and would not be across
+// chains: the entry was matched by identity first, so this is the same model's
+// own stored list, and a differing length leaves the tail unmatched and refused.
+func restoreRedacted(dst, src any, srcOK bool) (any, error) {
+	switch d := dst.(type) {
+	case string:
+		if d != redactedSentinel {
+			return dst, nil
+		}
+		if !srcOK {
+			return nil, errRedactedEcho
+		}
+		return src, nil
+	case map[string]any:
+		sm, _ := src.(map[string]any)
+		for k, v := range d {
+			sv, ok := sm[k] // reading a nil map yields the zero value and false
+			nv, err := restoreRedacted(v, sv, ok)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", k, err)
+			}
+			d[k] = nv
+		}
+		return d, nil
+	case []any:
+		sl, _ := src.([]any)
+		for i, v := range d {
+			var sv any
+			ok := i < len(sl)
+			if ok {
+				sv = sl[i]
+			}
+			nv, err := restoreRedacted(v, sv, ok)
+			if err != nil {
+				return nil, fmt.Errorf("[%d]: %w", i, err)
+			}
+			d[i] = nv
+		}
+		return d, nil
+	}
+	return dst, nil
 }
 
 // mergeJSONMap merges src into dst: objects merge key by key, anything else

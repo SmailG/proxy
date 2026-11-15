@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -51,7 +52,7 @@ func TestJevWarnThrottle_BurstLogsOnce(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		route(t, r, userMsg(negationText), 100, 0)
 	}
-	if n := countLines(logs, "http status 503"); n != 1 {
+	if n := countLines(logs, "upstream error (http 503)"); n != 1 {
 		t.Errorf("burst of 25 failures logged %d warnings, want 1:\n%s", n, logs.String())
 	}
 	wantLog(t, logs, "level=WARN", "keyword scenario stands") // also asserts the key is absent
@@ -64,12 +65,12 @@ func TestJevWarnThrottle_LogsAgainAfterTheIntervalWithTheSuppressedCount(t *test
 	}
 	clk.advance(jevWarnInterval - time.Nanosecond)
 	route(t, r, userMsg(negationText), 100, 0) // still inside the interval: 5th suppressed
-	if n := countLines(logs, "http status 503"); n != 1 {
+	if n := countLines(logs, "upstream error (http 503)"); n != 1 {
 		t.Fatalf("logged %d times just inside the interval, want 1", n)
 	}
 	clk.advance(time.Nanosecond) // exactly the interval
 	route(t, r, userMsg(negationText), 100, 0)
-	if n := countLines(logs, "http status 503"); n != 2 {
+	if n := countLines(logs, "upstream error (http 503)"); n != 2 {
 		t.Fatalf("logged %d times at the interval, want 2:\n%s", n, logs.String())
 	}
 	wantLog(t, logs, "suppressed=5")
@@ -96,11 +97,34 @@ func TestJevWarnThrottle_ReasonsAreIndependent(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		route(t, r, userMsg(negationText), 100, 0)
 	}
-	if n := countLines(logs, "http status 429"); n != 1 {
+	if n := countLines(logs, "rate limited (http 429)"); n != 1 {
 		t.Errorf("429 logged %d times, want 1", n)
 	}
 	if n := countLines(logs, "api key environment variable"); n != 1 {
 		t.Errorf("missing-key logged %d times, want 1 (independent of the 429 reason):\n%s", n, logs.String())
+	}
+}
+
+// The throttle key is the whole reason, so two statuses that name the same class
+// are two reasons: an outage alternating 502 and 503 gets a line for each.
+func TestJevWarnThrottle_StatusesSharingAClassAreIndependent(t *testing.T) {
+	var hits atomic.Int32
+	stub := newJevStub(t, func(w http.ResponseWriter, _ *http.Request) {
+		if hits.Add(1)%2 == 1 {
+			w.WriteHeader(502)
+			return
+		}
+		w.WriteHeader(503)
+	})
+	r, logs := newJevRouter(t, stub, config.JevModeActive)
+	r.jev.warn.now = newClock().now
+	for i := 0; i < 4; i++ {
+		route(t, r, userMsg(negationText), 100, 0)
+	}
+	for _, status := range []string{"upstream error (http 502)", "upstream error (http 503)"} {
+		if n := countLines(logs, status); n != 1 {
+			t.Errorf("%s logged %d times, want 1:\n%s", status, n, logs.String())
+		}
 	}
 }
 
@@ -113,7 +137,7 @@ func TestJevWarnThrottle_ShadowBurstLogsOnce(t *testing.T) {
 		route(t, r, userMsg("Hello"), 100, 0)
 		r.jev.wg.Wait()
 	}
-	if n := countLines(logs, "http status 500"); n != 1 {
+	if n := countLines(logs, "upstream error (http 500)"); n != 1 {
 		t.Errorf("shadow burst logged %d warnings, want 1:\n%s", n, logs.String())
 	}
 }

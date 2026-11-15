@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -125,11 +126,18 @@ func (r *ModelRouter) jevStreamingShadow(messages []MessageContent, tokenCount i
 }
 
 // jevActive lets Jev decide. It blocks the request for at most timeout_ms; any
-// failure returns the keyword result unchanged.
+// failure returns the keyword result unchanged, and so does an answer the model
+// was not confident enough to give.
 func (r *ModelRouter) jevActive(jcfg config.JevRoutingConfig, messages []MessageContent, keyword ScenarioResult, text string) ScenarioResult {
 	res, err := r.classify(jcfg, text)
 	if err != nil {
 		r.logJevFallback(jcfg.Mode, keyword, err)
+		return keyword
+	}
+	if res.Confidence < jcfg.MinConfidence {
+		// Deliberately not cached: a decision that was not acted on must not be
+		// reused by the tool-result turns that follow this one.
+		r.logJevAbstained(jcfg.Mode, keyword, res, jcfg.MinConfidence)
 		return keyword
 	}
 	r.jev.cache.put(jevKey(text), res)
@@ -231,10 +239,40 @@ func (r *ModelRouter) logJevResult(mode string, keyword ScenarioResult, jev Scen
 		"mode", mode,
 		"keyword_scenario", keyword.Scenario,
 		"jev_level", res.Level,
+		"jev_argmax", res.Argmax,
 		"jev_scenario", jev,
+		"jev_confidence", res.Confidence,
+		"jev_probs", jevProbs(res.Probabilities),
 		"architecture_prob", res.ArchitectureProb,
 		"agree", keyword.Scenario == jev,
 		"latency_ms", res.Latency.Milliseconds(),
+		"input_tokens", res.InputTokens,
+		"jev_model", res.Model,
+	)
+}
+
+// jevProbs renders the level distribution as one compact field, so a low
+// confidence in the log can be read as the split that caused it.
+func jevProbs(p [jevLevels]float64) string {
+	parts := make([]string, len(p))
+	for level, v := range p {
+		parts[level] = strconv.FormatFloat(v, 'f', 2, 64)
+	}
+	return strings.Join(parts, "/")
+}
+
+// logJevAbstained records an active-mode answer that was not acted on because
+// the model was not sure enough of it. Unlike a failure this is one Info line
+// per request rather than a throttled warning: it is the configured behaviour,
+// and how often it happens is the signal for tuning min_confidence.
+func (r *ModelRouter) logJevAbstained(mode string, keyword ScenarioResult, res JevResult, floor float64) {
+	r.jev.log().Info("jev routing abstained: confidence below the floor, keyword scenario stands",
+		"mode", mode,
+		"keyword_scenario", keyword.Scenario,
+		"jev_level", res.Level,
+		"jev_confidence", res.Confidence,
+		"jev_probs", jevProbs(res.Probabilities),
+		"min_confidence", floor,
 	)
 }
 

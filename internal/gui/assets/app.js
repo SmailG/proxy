@@ -127,6 +127,14 @@ const TRANSLATIONS = {
     'jev.enable': 'Classify requests with Jev',
     'jev.enableHint': 'TypeSafe System One replaces keyword matching for requests the exact checks leave undecided. Applies without a restart.',
     'jev.modeHint': "shadow logs Jev's choice beside the keyword scenario and changes nothing; active lets Jev decide and can add up to timeout_ms to a request.",
+    'jev.minConfidence': 'Min Confidence (active)',
+    'jev.minConfidenceHint': 'In active mode an answer below this confidence is dropped and the keyword scenario stands, and it is not cached, so the tool-result turns behind it do not inherit a decision that was never acted on. 0 turns the check off; shadow mode logs the confidence but never abstains. The floor is per-provider tuning, not a constant: calibration is measured across a population of answers, so where it starts paying off depends on that endpoint\'s own right/wrong split.',
+    'jev.minConfidence.jev': 'Measured on the 30 labelled requests against Jev 1.14 (1.13 was not scored separately): a floor of 0.4-0.6 acted on 25/30 and was exact on 96% of those, against 87% with no floor. Its confidence averages 0.89-0.91 on right answers and 0.39-0.43 on wrong ones, so the floor separates the two sharply.',
+    'jev.minConfidence.alibaba': 'Measured on the same 30 labelled requests with the decision model: a floor of 0.4-0.6 changes nothing (30/30 acted on, 87% exact), because it is confidently wrong — 0.95 on right answers against 0.78 on wrong ones. It takes a floor near 0.8 to buy anything: 27/30 acted on, 93% exact.',
+    'jev.preset': 'Classifier',
+    'jev.presetHint': 'Fills Model, Base URL, API Key Env Var and Timeout below; every field stays editable. All three speak the same System One protocol, so the proxy sends an identical request either way.',
+    'jev.baseUrlHint.typesafe': 'The proxy posts to <base_url>/v1/systemone with "Authorization: Bearer <key>".',
+    'jev.baseUrlHint.alibaba': 'Replace YOUR-WORKSPACE-ID with your Model Studio workspace id: the decision model is served only from that workspace host, not from dashscope.aliyuncs.com. Measured on the same 30 labelled requests as Jev: identical reply shape, exact level on 26/30 (Jev 1.14 scored 27/30 and 26/30), 148 input tokens per call instead of 432 — but slower (p50 563 ms, p95 833 ms, which is why the preset raises the timeout) and far less honest about its own confidence (0.95 when right vs 0.78 when wrong, against Jev\'s 0.89 vs 0.43), so min_confidence buys much less here. Preview model: no published price, not covered by zero-data-retention.',
     'key.env': 'env',
     'key.set': 'set',
     'key.notSet': 'not set',
@@ -303,6 +311,14 @@ const TRANSLATIONS = {
     'jev.enable': '使用 Jev 分类请求',
     'jev.enableHint': 'TypeSafe System One 取代关键词匹配，用于精确检查未能判定的请求。修改即时生效，无需重启。',
     'jev.modeHint': 'shadow 仅在关键词场景旁记录 Jev 的判定，不改变路由；active 由 Jev 决定，最多为该请求增加 timeout_ms 的等待。',
+    'jev.minConfidence': '最低置信度（active）',
+    'jev.minConfidenceHint': 'active 模式下，置信度低于该值的判定会被丢弃，仍按关键词场景路由，且不会被缓存，因此其后的工具结果轮次不会继承一个从未生效的判定。0 表示关闭该检查；shadow 模式只记录置信度，不会弃权。该阈值是按服务商分别调校的参数，不是通用常量：校准是对一组判定的整体统计，因此它从何处开始产生收益，取决于该端点自身正确与错误判定的置信度分布。',
+    'jev.minConfidence.jev': '在 30 条标注请求上对 Jev 1.14 实测（1.13 未单独评测）：阈值 0.4-0.6 会对 25/30 条生效，其中级别完全正确 96%，无阈值时为 87%。它的置信度在正确判定上平均 0.89-0.91、错误判定上 0.39-0.43，因此阈值能清晰区分两者。',
+    'jev.minConfidence.alibaba': '在同样的 30 条标注请求上用决策模型实测：阈值 0.4-0.6 毫无作用（30/30 全部生效，正确率 87%），因为它错得很自信——正确判定平均 0.95，错误判定 0.78。阈值要到 0.8 附近才有收益：27/30 生效，正确率 93%。',
+    'jev.preset': '分类器',
+    'jev.presetHint': '自动填入下方的模型、Base URL、API Key 环境变量与超时；各字段仍可自由修改。三者使用同一套 System One 协议，代理发出的请求完全一致。',
+    'jev.baseUrlHint.typesafe': '代理会向 <base_url>/v1/systemone 发送请求，并带上 “Authorization: Bearer <key>”。',
+    'jev.baseUrlHint.alibaba': '请把 YOUR-WORKSPACE-ID 换成你的百炼工作空间 ID：决策模型只在该工作空间域名下提供，dashscope.aliyuncs.com 不提供服务。在与 Jev 相同的 30 条标注请求上实测：返回结构完全一致，级别正确 26/30（Jev 1.14 两次为 27/30 与 26/30），每次调用 148 个输入 token（Jev 为 432）；但更慢（p50 563 ms、p95 833 ms，因此预设会调高超时），且置信度区分能力差得多（正确时 0.95、错误时 0.78，而 Jev 为 0.89 与 0.43），所以 min_confidence 在这里作用有限。预览版模型：未公布价格，不在零数据保留（ZDR）覆盖范围内。',
     'key.env': '环境变量',
     'key.set': '已设置',
     'key.notSet': '未设置',
@@ -817,6 +833,7 @@ const CONFIG_FIELDS = [
   ['jev_routing.timeout_ms', 'cfg-jev-timeout', 'int'],
   ['jev_routing.base_url', 'cfg-jev-base-url', 'string'],
   ['jev_routing.api_key_env', 'cfg-jev-api-key-env', 'string'],
+  ['jev_routing.min_confidence', 'cfg-jev-min-confidence', 'float'],
 
   // OpenCode Go
   ['opencode_go.base_url', 'cfg-go-base-url', 'string'],
@@ -859,6 +876,93 @@ const KEY_STATUS_FIELDS = [
   ['model_studio.api_key', 'cfg-ms-key-status'],
   ['jev_routing.api_key_env', 'cfg-jev-key-status'],
 ];
+
+// The Jev section can target any System One endpoint: the classifier always
+// posts {model, state, questions} to base_url + /v1/systemone, so switching
+// provider is exactly these fields and the preset only fills them in.
+// Keyed by the model id, which is what the select carries. timeout_ms is part
+// of the preset because it is a property of the endpoint: measured over the 30
+// labelled requests, the decision model answered in p50 563 ms / p95 833 ms
+// against Jev's p50 172-245 / p95 238-511 ms, so the 800 ms default would time
+// out on roughly one call in twenty.
+const JEV_PRESETS = {
+  'jev-1.14.0': {
+    baseUrl: 'https://api.typesafe.ai',
+    apiKeyEnv: 'TYPESAFE_AI_API_KEY',
+    timeoutMs: 800,
+    hintKey: 'jev.baseUrlHint.typesafe',
+    minConfHintKey: 'jev.minConfidence.jev',
+  },
+  'jev-1.13.0': {
+    baseUrl: 'https://api.typesafe.ai',
+    apiKeyEnv: 'TYPESAFE_AI_API_KEY',
+    timeoutMs: 800,
+    hintKey: 'jev.baseUrlHint.typesafe',
+    minConfHintKey: 'jev.minConfidence.jev',
+  },
+  'decision-model-preview': {
+    baseUrl: 'https://YOUR-WORKSPACE-ID.ap-southeast-1.maas.aliyuncs.com/compatible-mode',
+    apiKeyEnv: 'DASHSCOPE_API_KEY',
+    timeoutMs: 2000,
+    hintKey: 'jev.baseUrlHint.alibaba',
+    minConfHintKey: 'jev.minConfidence.alibaba',
+  },
+};
+
+// setJevHint points a hint element's data-i18n attribute at the selected
+// provider's note so a language switch re-translates it like any static hint.
+// An empty key clears it, which is what an unrecognised model gets: quoting one
+// provider's measurements under another's endpoint would be worse than silence.
+function setJevHint(id, key) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (key) {
+    el.setAttribute('data-i18n', key);
+    el.textContent = t(key);
+  } else {
+    el.removeAttribute('data-i18n');
+    el.textContent = '';
+  }
+}
+
+// setJevProviderHints drives the two notes that depend on which endpoint the
+// section is pointed at: what the proxy sends there, and what min_confidence is
+// worth on that model. Both are keyed off the model, not the select, so a
+// hand-edited endpoint still gets the right note when the model is recognised.
+function setJevProviderHints(model) {
+  const preset = JEV_PRESETS[model];
+  setJevHint('cfg-jev-base-url-hint', preset ? preset.hintKey : '');
+  setJevHint('cfg-jev-min-confidence-hint', preset ? preset.minConfHintKey : '');
+}
+
+// applyJevPreset is the select's onchange. "custom" only clears the hints: the
+// fields keep whatever the user typed.
+function applyJevPreset(model) {
+  setJevProviderHints(model);
+  const preset = JEV_PRESETS[model];
+  if (!preset) return;
+  const values = [['cfg-jev-model', model], ['cfg-jev-base-url', preset.baseUrl], ['cfg-jev-api-key-env', preset.apiKeyEnv], ['cfg-jev-timeout', preset.timeoutMs]];
+  for (const [id, value] of values) {
+    const el = document.getElementById(id);
+    if (el) el.value = value;
+  }
+}
+
+// syncJevPreset derives the select from the loaded config. The preset is a form
+// affordance, not a config field, so a hand-edited model or endpoint shows as
+// Custom rather than being silently rewritten on the next save.
+function syncJevPreset() {
+  const sel = document.getElementById('cfg-jev-preset');
+  if (!sel) return;
+  const modelEl = document.getElementById('cfg-jev-model');
+  const raw = modelEl ? modelEl.value.trim() : '';
+  const model = raw === '' ? 'jev-1.14.0' : raw; // applyJevDefaults' choice
+  const urlEl = document.getElementById('cfg-jev-base-url');
+  const baseUrl = (urlEl ? urlEl.value : '').trim().replace(/\/+$/, '');
+  const preset = JEV_PRESETS[model];
+  sel.value = preset && (baseUrl === '' || baseUrl === preset.baseUrl) ? model : 'custom';
+  setJevProviderHints(model);
+}
 
 // refreshKeyStatus reports where each key comes from and whether it resolves.
 // Only names and presence cross the wire — the endpoint never returns values.
@@ -917,6 +1021,13 @@ function readFieldValue(field) {
     const current = deepGet(currentProxyConfig, field[0]);
     return v === !!current ? undefined : v;
   }
+  if (field[2] === 'float') {
+    const v = raw.trim() === '' ? undefined : parseFloat(raw);
+    // NaN would serialise as null and clear the field, so treat it as unchanged.
+    if (v !== undefined && !Number.isFinite(v)) return undefined;
+    const current = deepGet(currentProxyConfig, field[0]);
+    return v === current ? undefined : v;
+  }
   if (field[2] === 'int') {
     const v = raw.trim() === '' ? undefined : parseInt(raw, 10);
     const current = deepGet(currentProxyConfig, field[0]);
@@ -941,12 +1052,13 @@ async function loadProxyConfig() {
       const val = deepGet(currentProxyConfig, path);
       if (type === 'bool') {
         el.checked = !!val;
-      } else if (type === 'int') {
+      } else if (type === 'int' || type === 'float') {
         el.value = val != null ? val : '';
       } else {
         el.value = val || '';
       }
     }
+    syncJevPreset();
     await refreshKeyStatus();
   } catch (e) {
     console.error('Failed to load proxy config:', e);
@@ -962,6 +1074,23 @@ async function saveProxyConfig() {
   const saveBtn = document.getElementById('btn-save-cfg');
   saveBtn.disabled = true;
   saveBtn.textContent = 'Saving...';
+
+  // Refuse a value outside the range its own input declares. The backend
+  // validates a jev_routing block only while it is enabled — a disable must
+  // never be blocked by a dormant value — so without this an out-of-range
+  // number is written to disk and only surfaces on the save that turns Jev on.
+  // stepMismatch is allowed through: the step is for the spinner, not a rule.
+  for (const field of CONFIG_FIELDS) {
+    const el = document.getElementById(field[1]);
+    if (!el || el.value === '' || el.validity.stepMismatch) continue;
+    if (!el.checkValidity()) {
+      const label = document.querySelector('label[for="' + field[1] + '"]');
+      showSaveStatus('Invalid value for ' + (label ? label.textContent.trim() : field[0]), 'error');
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save & Apply Config';
+      return;
+    }
+  }
 
   // Build a patch object with only changed fields.
   const patch = {};

@@ -68,6 +68,20 @@ Legacy ~/.config/oc-go-cc/config.json and OC_GO_CC_* environment variables are s
 }
 
 // serveCmd returns the command to start the proxy server.
+// printJevNotice is the privacy notice for jev_routing: enabling it sends part of
+// the user's prompt to a third party, and base_url decides which one. Both
+// `serve` and `start` call it, so the destination is never stated by only one of
+// the two ways to run the proxy.
+func printJevNotice(cfg *config.Config) {
+	if !cfg.JevRouting.Enabled {
+		return
+	}
+	fmt.Printf("Jev routing (%s): the first 600 characters of the latest user message are sent to %s\n", cfg.JevRouting.Mode, cfg.JevRouting.BaseURL)
+	if cfg.JevRouting.Mode == config.JevModeActive && !cfg.EnableStreamingScenarioRouting {
+		fmt.Println("Warning: jev_routing is active but enable_streaming_scenario_routing is false: streaming requests (Claude Code) route to fast and never reach Jev. Set it to true.")
+	}
+}
+
 func serveCmd() *cobra.Command {
 	var configPath string
 	var port int
@@ -198,12 +212,7 @@ func serveCmd() *cobra.Command {
 			} else {
 				fmt.Printf("Forwarding to: %s\n", cfg.OpenCodeGo.BaseURL)
 			}
-			if cfg.JevRouting.Enabled {
-				fmt.Printf("Jev routing (%s): the first 600 characters of the latest user message are sent to %s\n", cfg.JevRouting.Mode, cfg.JevRouting.BaseURL)
-				if cfg.JevRouting.Mode == config.JevModeActive && !cfg.EnableStreamingScenarioRouting {
-					fmt.Println("Warning: jev_routing is active but enable_streaming_scenario_routing is false: streaming requests (Claude Code) route to fast and never reach Jev. Set it to true.")
-				}
-			}
+			printJevNotice(cfg)
 			fmt.Println()
 			fmt.Println("Configure Claude Code with:")
 			fmt.Printf("  export ANTHROPIC_BASE_URL=http://%s:%d\n", cfg.Host, cfg.Port)
@@ -368,6 +377,7 @@ Press Ctrl+C to stop the server.`,
 			// Print startup info.
 			fmt.Printf("Starting %s v%s\n", appName, version)
 			fmt.Printf("Proxy listening on %s:%d\n", cfg.Host, cfg.Port)
+			printJevNotice(cfg)
 			fmt.Println()
 			fmt.Println("Configure Claude Code with:")
 			fmt.Printf("  export ANTHROPIC_BASE_URL=http://%s:%d\n", cfg.Host, cfg.Port)

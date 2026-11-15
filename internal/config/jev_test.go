@@ -48,17 +48,22 @@ func TestJevRouting_DefaultsWhenBlockAbsent(t *testing.T) {
 	if j.BaseURL != "https://api.typesafe.ai" {
 		t.Errorf("BaseURL = %q, want https://api.typesafe.ai", j.BaseURL)
 	}
+	if j.MinConfidence != 0 {
+		t.Errorf("MinConfidence = %v, want 0 (the gate off by default)", j.MinConfidence)
+	}
 }
 
 func TestJevRouting_ExplicitValuesKept(t *testing.T) {
 	cfg, err := loadJevConfig(t, `{"enabled": true, "mode": "active", "model": "jev-latest",
-		"timeout_ms": 150, "api_key_env": "MY_JEV_KEY", "base_url": "http://127.0.0.1:9999"}`)
+		"timeout_ms": 150, "api_key_env": "MY_JEV_KEY", "base_url": "http://127.0.0.1:9999",
+		"min_confidence": 0.6}`)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	j := cfg.JevRouting
 	if !j.Enabled || j.Mode != JevModeActive || j.Model != "jev-latest" ||
-		j.TimeoutMs != 150 || j.APIKeyEnv != "MY_JEV_KEY" || j.BaseURL != "http://127.0.0.1:9999" {
+		j.TimeoutMs != 150 || j.APIKeyEnv != "MY_JEV_KEY" || j.BaseURL != "http://127.0.0.1:9999" ||
+		j.MinConfidence != 0.6 {
 		t.Errorf("explicit values were not kept: %+v", j)
 	}
 }
@@ -73,6 +78,8 @@ func TestJevRouting_Validation(t *testing.T) {
 	}{
 		{"bad mode", `{"enabled": true, "mode": "live"}`, "jev_routing.mode"},
 		{"negative timeout", `{"enabled": true, "timeout_ms": -5}`, "jev_routing.timeout_ms"},
+		{"confidence floor below 0", `{"enabled": true, "min_confidence": -0.1}`, "jev_routing.min_confidence"},
+		{"confidence floor above 1", `{"enabled": true, "min_confidence": 1.5}`, "jev_routing.min_confidence"},
 		{"timeout above cap", `{"enabled": true, "timeout_ms": 10001}`, "jev_routing.timeout_ms"},
 		{"relative base url", `{"enabled": true, "base_url": "api.typesafe.ai"}`, "jev_routing.base_url"},
 		{"ftp base url", `{"enabled": true, "base_url": "ftp://api.typesafe.ai"}`, "jev_routing.base_url"},
@@ -96,7 +103,7 @@ func TestJevRouting_Validation(t *testing.T) {
 }
 
 func TestJevRouting_DisabledBlockIsNotValidated(t *testing.T) {
-	if _, err := loadJevConfig(t, `{"enabled": false, "mode": "live", "timeout_ms": -1}`); err != nil {
+	if _, err := loadJevConfig(t, `{"enabled": false, "mode": "live", "timeout_ms": -1, "min_confidence": 5}`); err != nil {
 		t.Errorf("a disabled jev_routing block must not fail the load, got %v", err)
 	}
 }

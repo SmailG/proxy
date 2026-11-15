@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,19 +49,43 @@ var jevActionLevels = []string{
 }
 
 const (
+	// jevRequestMaxChars is our ceiling, not the API's: Jev takes 64k tokens per
+	// request and 32k per question, and a whole call — instructions, level
+	// criteria and the text — measured 432 input tokens, ~0.7% of that budget.
+	// Cutting the text bounds what one request can carry off the machine and what
+	// a call costs. Raising it needs no API change, only a re-measurement of the
+	// accuracy, latency and token figures quoted in CONFIGURATION.md.
 	jevRequestMaxChars  = 600
 	jevResponseMaxBytes = 64 << 10
 	jevEndpointPath     = "/v1/systemone"
 	jevTopLevel         = 2 // highest level number in jevActionLevels
+	jevLevels           = jevTopLevel + 1
+
+	// jevProbabilitySumTolerance accepts the rounding the API applies to each
+	// probability: three levels reported to two decimals can sum to 0.99.
+	jevProbabilitySumTolerance = 0.02
 )
 
-// JevResult is one classification: the routing level (0..2), the Noul
-// probability that the request is architecture-level (log line only) and how
-// long the call took.
+// JevResult is one classification: the routing level (0..2), the level with the
+// most probability behind it, how sure the model was, the Noul probability that
+// the request is architecture-level (log line only), what the call cost and how
+// long it took.
 type JevResult struct {
+	// Level is the score rounded to the nearest level, the decision routing acts
+	// on. Argmax is the single level holding the most probability. They differ
+	// only when probability is split, which is exactly what Confidence reports.
+	// Routing keeps the rounded score because on the labelled set it was right
+	// 27/30 and 26/30 over two live runs against argmax's 24/30 both times: on
+	// every split answer argmax picked the minority peak. Argmax is therefore
+	// evidence for the log line, not a better decision.
 	Level            int
+	Argmax           int
 	Score            float64
+	Confidence       float64
+	Probabilities    [jevLevels]float64
 	ArchitectureProb float64
+	InputTokens      int
+	Model            string
 	Latency          time.Duration
 }
 
@@ -81,13 +106,24 @@ type jevState struct {
 }
 
 type jevAnswer struct {
-	Type  string   `json:"type"`
-	Score *float64 `json:"score"`
-	Noul  *float64 `json:"noul"`
+	Type       string   `json:"type"`
+	Score      *float64 `json:"score"`
+	Confidence *float64 `json:"confidence"`
+	// Probabilities is keyed by level number as a string ("0", "1", "2").
+	Probabilities map[string]float64 `json:"probabilities"`
+	Noul          *float64           `json:"noul"`
 }
 
 type jevResponseBody struct {
+	// Model is the versioned id that answered, which is how a pinned id is
+	// confirmed and an alias drift is noticed.
+	Model   string               `json:"model"`
 	Answers map[string]jevAnswer `json:"answers"`
+	Usage   *jevUsage            `json:"usage"`
+}
+
+type jevUsage struct {
+	InputTokens int `json:"input_tokens"`
 }
 
 // jevClassifier makes one HTTP POST per Classify call. It holds no secret: the
@@ -150,7 +186,9 @@ func (c *jevClassifier) post(ctx context.Context, apiKey, text string) (jevRespo
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return out, fmt.Errorf("http status %d", resp.StatusCode)
+		// The body is not read: 422 names the offending field there, but the same
+		// body can echo the credential, and jevStatusClass is enough to act on.
+		return out, fmt.Errorf("%s (http %d)", jevStatusClass(resp.StatusCode), resp.StatusCode)
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, jevResponseMaxBytes)).Decode(&out); err != nil {
 		return out, errors.New("malformed response body")
@@ -169,6 +207,34 @@ func classifyTransportError(ctx context.Context) string {
 	}
 }
 
+// jevStatusClass names the failure a status represents, because the fix differs
+// and the number alone does not say which applies: 401 is our config, 422 is our
+// question, 429 is our traffic, 529 is their capacity. These are the codes
+// docs.typesafe.ai/api/errors defines. The text doubles as the warning throttle's
+// key, so it must stay finite and carry nothing per-request (URL, body,
+// credential); the code rides along beside it. No retry, deliberately: inside
+// active mode's timeout_ms budget a backoff only turns a fast fail-open slow.
+func jevStatusClass(status int) string {
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "api key rejected"
+	case http.StatusNotFound:
+		return "endpoint not found"
+	case http.StatusBadRequest, http.StatusRequestEntityTooLarge,
+		http.StatusUnsupportedMediaType, http.StatusUnprocessableEntity:
+		return "request rejected"
+	case http.StatusTooManyRequests:
+		return "rate limited"
+	case 529: // Overloaded; net/http has no constant for it.
+		return "upstream overloaded"
+	default:
+		if status >= 500 {
+			return "upstream error"
+		}
+		return "unexpected status"
+	}
+}
+
 // parseJevResponse turns the answers into a JevResult. Anything missing, of the
 // wrong type, non-finite or out of range is an error: a half-trusted answer
 // must not steer routing.
@@ -177,19 +243,80 @@ func parseJevResponse(body jevResponseBody) (JevResult, error) {
 	if action.Type != "score" || action.Score == nil {
 		return JevResult{}, errors.New("response missing the score answer")
 	}
+	if action.Confidence == nil {
+		return JevResult{}, errors.New("response missing the score confidence")
+	}
+	probs, err := parseLevelProbabilities(action.Probabilities)
+	if err != nil {
+		return JevResult{}, err
+	}
 	arch := body.Answers[jevArchitectureID]
 	if arch.Type != "noul" || arch.Noul == nil {
 		return JevResult{}, errors.New("response missing the noul answer")
 	}
-	score, noul := *action.Score, *arch.Noul
-	if !inRange(score, 0, jevTopLevel) || !inRange(noul, 0, 1) {
+	score, confidence, noul := *action.Score, *action.Confidence, *arch.Noul
+	if !inRange(score, 0, jevTopLevel) || !inRange(confidence, 0, 1) || !inRange(noul, 0, 1) {
 		return JevResult{}, errors.New("answer value out of range")
 	}
 	// The score is a probability-weighted mean of level numbers, so it can fall
 	// between levels. Rounding to the nearest level is what the Score docs
 	// recommend when code needs one outcome; a 50/50 split between levels 0 and
-	// 2 rounds to level 1, the default, which is the safe hedge.
-	return JevResult{Level: int(math.Round(score)), Score: score, ArchitectureProb: noul}, nil
+	// 2 rounds to level 1, the default, which is the safe hedge. Argmax is the
+	// level the probability actually peaks on, carried beside the decision so the
+	// two can be compared, and Confidence is what separates a clear answer from
+	// that split.
+	res := JevResult{
+		Level:            int(math.Round(score)),
+		Argmax:           argmaxLevel(probs),
+		Score:            score,
+		Confidence:       confidence,
+		Probabilities:    probs,
+		ArchitectureProb: noul,
+		Model:            body.Model,
+	}
+	if body.Usage != nil {
+		res.InputTokens = body.Usage.InputTokens
+	}
+	return res, nil
+}
+
+// parseLevelProbabilities reads the per-level distribution of a Score answer.
+// Every level must be present and in [0, 1] and together they must add to 1: on
+// a partial distribution neither the argmax nor a confidence floor would mean
+// what the docs promise.
+func parseLevelProbabilities(raw map[string]float64) ([jevLevels]float64, error) {
+	var out [jevLevels]float64
+	if len(raw) != jevLevels {
+		return out, fmt.Errorf("response probabilities have %d levels, want %d", len(raw), jevLevels)
+	}
+	sum := 0.0
+	for level := range out {
+		v, ok := raw[strconv.Itoa(level)]
+		if !ok {
+			return out, fmt.Errorf("response probabilities are missing level %d", level)
+		}
+		if !inRange(v, 0, 1) {
+			return out, fmt.Errorf("probability for level %d out of range", level)
+		}
+		out[level] = v
+		sum += v
+	}
+	if math.Abs(sum-1) > jevProbabilitySumTolerance {
+		return out, errors.New("response probabilities do not sum to 1")
+	}
+	return out, nil
+}
+
+// argmaxLevel returns the level holding the most probability. A tie keeps the
+// lower level, so the result never depends on map iteration order.
+func argmaxLevel(probs [jevLevels]float64) int {
+	best := 0
+	for level := 1; level < len(probs); level++ {
+		if probs[level] > probs[best] {
+			best = level
+		}
+	}
+	return best
 }
 
 // inRange is false for NaN, whose comparisons are all false.
